@@ -33,10 +33,10 @@ RealityCheck is a cross-browser extension that detects likely AI-generated conte
 │  │  └──────────────────────────────────────────────────┘   │  │
 │  └──────────────────────────────────────────────────────────┘  │
 └────────────────────────────────────────────────────────────────┘
-           │ (optional, user opt-in only)
+           │ (on by default; user can disable in popup)
            ▼
   Remote classifier endpoint
-  (OpenAI / Generic HTTP API)
+  (RealityCheck hosted Azure proxy — no API key required)
 ```
 
 ---
@@ -141,12 +141,26 @@ If the watermark would cover more than `obstructionThreshold` (default 50%) of t
 
 ## Privacy model
 
+Remote classification is **enabled by default**. The extension calls our hosted Azure classifier (`https://api.realitycheck.ai/v1/classify`) for any image that passes the local photorealism pre-filter. No API key is required from the user — authentication to downstream AI services is handled server-side by the proxy. Users can turn remote classification off at any time in the popup.
+
 | Setting | Behaviour |
 |---|---|
-| Local-only mode (default) | No network calls. All analysis is on-device. |
-| Remote detection mode | User must explicitly enable. Shows a clear warning. Only activated content is sent. Payloads are minimal (text snippet ≤2000 chars, downscaled image thumbnail). |
+| Remote classification ON (default) | Photorealistic images, inconclusive text, and video frames are sent to our hosted endpoint. Payloads are minimal: text snippet ≤ 2 000 chars, downscaled image thumbnail (128 × 128 px, JPEG). A notice is shown in the popup whenever remote mode is active. |
+| Remote classification OFF | No network calls. All analysis is on-device using local heuristics only. The popup suggests using Medium or High detection quality for best accuracy in this mode. |
 
-API keys are stored exclusively in `chrome.storage.sync` / `browser.storage.sync`. They are never hardcoded and never logged.
+API keys are never required for the default endpoint. For custom/development endpoints, an optional API key can be configured in the **Advanced** section (collapsed by default) of the popup. Keys are stored exclusively in `chrome.storage.sync` / `browser.storage.sync` — never hardcoded or logged.
+
+### Photorealism pre-filter
+
+Before any content is analysed or sent off-device, every image passes through a canvas-based photorealism pre-filter. Non-photorealistic images (icons, cartoons, illustrations, text graphics) are **skipped entirely** — they generate no local heuristic result and are never sent to the remote endpoint. This keeps both processing cost and data transmission minimal.
+
+The pre-filter depth is controlled by the **Detection Quality** setting:
+
+| Tier | Analysis | Cost |
+|---|---|---|
+| Low | Colour histogram entropy + unique colour count (64 × 64 canvas) | ~0 ms |
+| Medium (default) | Low + block noise/texture variance + saturation distribution | < 1 ms |
+| High | Medium + bundled ML model (TF.js / ONNX, WebGL-accelerated) | 10–50 ms |
 
 ---
 
