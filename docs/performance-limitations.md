@@ -57,17 +57,25 @@ Watermark animations (`flash`, `pulse`) use CSS `@keyframes` rather than `setInt
 |---|---|---|
 | Pre-filter may skip borderline-photorealistic images | Some photorealistic AI art may be missed | Use Medium or High quality tier |
 | URL heuristics only (remote classification disabled) | Reposted/resaved images not detected | Remote classification is on by default |
-| No EXIF binary parsing | Cannot detect missing camera metadata | Future: integrate EXIF.js |
+| EXIF parser covers JPEG only | PNG/WebP EXIF metadata not parsed | Extend parser to additional formats |
 | Remote classifier accuracy unknown | Varies by provider and model | Disclose confidence level in UI |
+| C2PA signature not cryptographically verified | Full trust chain requires backend lookup | Structural presence check is conservative positive signal |
 
 ### Video detection
 
 | Limitation | Impact | Mitigation |
 |---|---|---|
-| URL heuristics only (remote classification disabled) | Most deepfakes not detected | Remote classification is on by default |
+| Multi-frame seeking may not work on all codecs | Some videos fall back to URL heuristics | Cross-origin CORS is an intentional privacy boundary |
 | Cross-origin CORS block | Cannot frame-capture YouTube/Vimeo | Intentional privacy/security boundary |
-| Single-frame sampling | Multi-frame temporal artefacts not detected | Future: periodic multi-frame sampling |
-| No on-device deepfake model | Local detection is very limited | Future: ONNX/WebGPU inference |
+| Multi-frame temporal analysis is heuristic | Cannot catch all deepfake artefacts | Future: dedicated deepfake ONNX model |
+| No on-device deepfake model | Local detection is limited | Future: ONNX/WebGPU inference |
+
+### Audio detection
+
+| Limitation | Impact | Mitigation |
+|---|---|---|
+| URL heuristics only for local detection | Real-audio content misclassified if rehosted | Remote classification when enabled |
+| No spectral/waveform analysis | Voice cloning not detected locally | Future: on-device ONNX audio model |
 
 ### General
 
@@ -83,9 +91,11 @@ Watermark animations (`flash`, `pulse`) use CSS `@keyframes` rather than `setInt
 
 ## Future improvements
 
-- Integrate [C2PA Content Credentials](https://c2pa.org) inspection for images/videos.
+- Bundle a fine-tuned EfficientNet/MobileNet ONNX model for High-tier image classification; plug in via `registerMlModel()`.
 - Add an ONNX-based on-device text detector (e.g., a fine-tuned distilBERT for AI detection).
 - Add WebGPU-accelerated image classification for local pixel-level detection.
 - Expand the filler-phrase list and use n-gram frequency scoring.
 - Add per-element confidence score display with an expandable details panel.
 - Support iframe analysis via `all_frames: true` in the content script (with appropriate performance guards).
+- Configure a real backend endpoint for `submitFeedback()` to enable user-reported false positives.
+- Implement full C2PA cryptographic signature verification via a backend trust-store lookup.

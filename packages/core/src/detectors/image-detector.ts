@@ -5,25 +5,29 @@
  * 1. Photorealism pre-filter (tier-dependent canvas analysis).
  *    - If the image is NOT photorealistic (icon, cartoon, text graphic), skip entirely.
  *    - If it IS photorealistic (or uncertain), continue to step 2.
- * 2. Local heuristics: CDN URL patterns, power-of-two dimensions, AI aspect ratios.
+ * 2. Local heuristics: CDN URL patterns, power-of-two dimensions, AI aspect ratios,
+ *    EXIF metadata analysis, and C2PA/Content Credentials detection.
  * 3. If remoteEnabled: send to the hosted classifier (DEFAULT_REMOTE_ENDPOINT).
  *    Remote result is blended with local score (70% remote, 30% local).
  *
  * Pre-filter tiers:
  *   low:    Color histogram entropy + unique color count (canvas 64×64, ~zero cost)
  *   medium: Low + block noise/texture variance + saturation distribution
- *   high:   Medium + bundled ML model (stub — see HIGH_TIER_ML_AVAILABLE below)
+ *   high:   Medium + registered ML model (via registerMlModel) when available,
+ *           otherwise falls back to medium-tier canvas analysis.
  *
  * Known limitations: local heuristics have low accuracy for novel AI models.
  * See docs/architecture.md for details.
  */
-import { DetectionResult, DetectionQuality, DetectorOptions, PhotorealismResult } from '../types.js';
+import { DetectionResult, DetectionQuality, DetectorOptions, PhotorealismResult, MlModelRunner } from '../types.js';
 import { Detector } from '../types.js';
 import { DEFAULT_REMOTE_ENDPOINT } from '../types.js';
 import { DetectionCache } from '../utils/cache.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
 import { hashUrl, hashDataUrl } from '../utils/hash.js';
 import { createRemoteAdapter } from '../adapters/remote-adapter.js';
+import { parseExifFromDataUrl, getExifAIScore } from '../utils/exif-parser.js';
+import { detectC2PAFromDataUrl } from '../utils/c2pa.js';
 
 // ── Pre-filter constants ─────────────────────────────────────────────────────
 
@@ -37,11 +41,56 @@ const PREFILTER_SIZE = 64;
  */
 const PHOTOREALISM_SKIP_THRESHOLD = 0.20;
 
+// ── ML model registry ────────────────────────────────────────────────────────
+
 /**
- * Set to true when an ONNX / TF.js model is bundled with the extension.
- * Until then, High tier falls back to Medium-tier canvas analysis.
+ * Module-level registry for a pluggable on-device ML model runner.
+ * Call `registerMlModel()` at extension startup to activate High-tier inference.
  */
-const HIGH_TIER_ML_AVAILABLE = false;
+let _mlModelRunner: MlModelRunner | null = null;
+
+/**
+ * Register an on-device ML model runner for High-tier image analysis.
+ *
+ * The runner is called during High-tier photorealism scoring and can also be
+ * used as an additional AI-generation signal in `detect()`.
+ *
+ * Example (TensorFlow.js):
+ * ```ts
+ * import * as tf from '@tensorflow/tfjs';
+ * registerMlModel({
+ *   async run(data, width, height) {
+ *     const tensor = tf.tensor4d(data, [1, height, width, 4]);
+ *     const [, score] = (await model.predict(tensor) as tf.Tensor).dataSync();
+ *     return score;
+ *   },
+ * });
+ * ```
+ *
+ * Example (ONNX Runtime Web):
+ * ```ts
+ * import * as ort from 'onnxruntime-web';
+ * const session = await ort.InferenceSession.create('./model.onnx');
+ * registerMlModel({
+ *   async run(data, width, height) {
+ *     const input = new ort.Tensor('uint8', data, [1, height, width, 4]);
+ *     const { output } = await session.run({ input });
+ *     return output.data[1] as number; // AI-class probability
+ *   },
+ * });
+ * ```
+ */
+export function registerMlModel(runner: MlModelRunner): void {
+  _mlModelRunner = runner;
+}
+
+/**
+ * Returns true when an ML model runner has been registered.
+ * Used by tests and extension startup code to check availability.
+ */
+export function isMlModelAvailable(): boolean {
+  return _mlModelRunner !== null;
+}
 
 // ── Pre-filter helper functions ──────────────────────────────────────────────
 
@@ -297,19 +346,20 @@ export function scoreMediumTier(data: Uint8ClampedArray): number {
 
 /**
  * Score using High-tier analysis.
- * Currently falls back to Medium-tier canvas analysis because no ML model is bundled.
- * When a bundled ML model becomes available (HIGH_TIER_ML_AVAILABLE = true):
- * 1. Bundle a TensorFlow.js / ONNX Runtime Web compatible model with the extension.
- * 2. Load it at startup and expose a `runMLModel(data: ImageData): Promise<number>` function.
- * 3. Set HIGH_TIER_ML_AVAILABLE = true and implement the async call below.
+ * Uses the registered ML model runner when available (see `registerMlModel`).
+ * Falls back to Medium-tier canvas analysis when no model is registered.
  */
 async function scoreHighTier(data: Uint8ClampedArray): Promise<number> {
-  if (HIGH_TIER_ML_AVAILABLE) {
-    // TODO: call the bundled ML model here.
-    // const mlScore = await runMLModel(data);
-    // return scoreMediumTier(data) * 0.3 + mlScore * 0.7;
+  if (_mlModelRunner !== null) {
+    try {
+      const mlScore = await _mlModelRunner.run(data, PREFILTER_SIZE, PREFILTER_SIZE);
+      // Blend: ML model result weighted 70%, canvas analysis 30%
+      return scoreMediumTier(data) * 0.3 + mlScore * 0.7;
+    } catch {
+      // ML inference failed — fall back to medium tier
+    }
   }
-  // Fall back to Medium tier until a model is bundled
+  // Fall back to Medium tier when no model is registered
   return scoreMediumTier(data);
 }
 
@@ -510,6 +560,47 @@ export class ImageDetector implements Detector {
           ? Math.max(localScore, visualScore * discount * 0.6)
           : Math.max(localScore, visualScore * discount);
     }
+
+    // ── Step 2c: EXIF metadata analysis ──────────────────────────────────────
+    // Obtain a full-resolution data URL for EXIF and C2PA scanning.
+    // Only attempt for same-origin images (downscaling may drop EXIF, so we
+    // use a lossless PNG capture for metadata scanning).
+    let metadataDataUrl: string | null = null;
+    if (img) {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth || 1;
+        canvas.height = img.naturalHeight || 1;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0);
+          metadataDataUrl = canvas.toDataURL('image/png');
+        }
+      } catch {
+        // Cross-origin — skip metadata analysis
+      }
+    }
+
+    let exifScore = 0;
+    if (metadataDataUrl) {
+      const exifData = parseExifFromDataUrl(metadataDataUrl);
+      exifScore = getExifAIScore(exifData);
+    }
+
+    // ── Step 2d: C2PA / Content Credentials detection ─────────────────────────
+    // C2PA presence is a positive authenticity signal (reduces AI score).
+    let c2paAdjustment = 0;
+    if (metadataDataUrl) {
+      const c2pa = detectC2PAFromDataUrl(metadataDataUrl);
+      c2paAdjustment = c2pa.scoreAdjustment;
+    }
+
+    // Blend EXIF signal into combined local score (EXIF is a 15% weight)
+    if (exifScore > 0) {
+      combinedLocalScore = Math.min(1, combinedLocalScore * 0.85 + exifScore * 0.15);
+    }
+    // Apply C2PA adjustment (negative = more authentic → reduce score)
+    combinedLocalScore = Math.max(0, combinedLocalScore + c2paAdjustment);
 
     let finalScore = combinedLocalScore;
     let source: DetectionResult['source'] = 'local';

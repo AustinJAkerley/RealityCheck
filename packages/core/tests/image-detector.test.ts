@@ -240,3 +240,37 @@ describe('computeVisualAIScore', () => {
   });
 });
 
+// ── ML model registry ─────────────────────────────────────────────────────────
+
+import { registerMlModel, isMlModelAvailable } from '../src/detectors/image-detector';
+
+describe('ML model registry', () => {
+  test('isMlModelAvailable returns a boolean', () => {
+    expect(typeof isMlModelAvailable()).toBe('boolean');
+  });
+
+  test('registerMlModel makes isMlModelAvailable return true', () => {
+    registerMlModel({
+      async run(_data, _w, _h) {
+        return 0.5;
+      },
+    });
+    expect(isMlModelAvailable()).toBe(true);
+  });
+
+  test('High-tier prefilter uses registered model result', async () => {
+    // Register a model that always returns 0.9 (strong AI signal)
+    registerMlModel({
+      async run(_data, _w, _h) {
+        return 0.9;
+      },
+    });
+    // With a model that returns 0.9, blended score = 0.3 * mediumTier + 0.7 * 0.9
+    // For noisy photo data mediumTier > 0.5 → blended >= 0.3 * 0.5 + 0.7 * 0.9 = 0.78
+    const result = await runPhotorealismPreFilter(noisyPixels(SIZE), 'high');
+    expect(result.score).toBeGreaterThan(0.5);
+    expect(result.isPhotorealistic).toBe(true);
+  });
+});
+
+

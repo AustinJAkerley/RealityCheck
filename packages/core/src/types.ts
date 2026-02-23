@@ -4,7 +4,7 @@
 
 export type ConfidenceLevel = 'low' | 'medium' | 'high';
 
-export type ContentType = 'text' | 'image' | 'video';
+export type ContentType = 'text' | 'image' | 'video' | 'audio';
 
 export type WatermarkMode = 'static' | 'flash' | 'pulse' | 'auto-hide';
 
@@ -142,4 +142,35 @@ export interface RemotePayload {
 export interface RemoteClassificationResult {
   score: number;
   label: string;
+}
+
+/**
+ * Interface for plugging in an on-device ML model runner (ONNX / TF.js).
+ * Implement this interface and register it with `registerMlModel()` in
+ * `image-detector.ts` to enable High-tier local inference.
+ */
+export interface MlModelRunner {
+  /**
+   * Run inference on a 64×64 RGBA pixel buffer.
+   * @param data   Flat RGBA pixel buffer (length = width * height * 4)
+   * @param width  Image width in pixels
+   * @param height Image height in pixels
+   * @returns Promise resolving to a 0–1 probability of AI generation
+   */
+  run(data: Uint8ClampedArray, width: number, height: number): Promise<number>;
+}
+
+/**
+ * User feedback report for a false positive or missed AI detection.
+ * Wire this up to a backend endpoint or telemetry sink to improve future accuracy.
+ */
+export interface FeedbackReport {
+  contentType: ContentType;
+  feedback: 'false_positive' | 'missed_ai';
+  /** URL of the content that was misclassified, if available */
+  url?: string;
+  /** The score that was returned by the detector */
+  detectorScore?: number;
+  /** Unix timestamp (ms) when the feedback was submitted */
+  timestamp: number;
 }
