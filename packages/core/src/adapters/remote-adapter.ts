@@ -114,8 +114,15 @@ export function createRemoteAdapter(
   endpoint: string,
   apiKey: string
 ): RemoteAdapter {
-  if (endpoint.includes('api.openai.com') || endpoint.includes('openai')) {
-    return new OpenAIAdapter(apiKey);
+  try {
+    const { hostname } = new URL(endpoint);
+    // Use the OpenAI adapter only when the hostname is exactly api.openai.com
+    // (or a subdomain of openai.com) to avoid substring-matching attacks.
+    if (hostname === 'api.openai.com' || hostname.endsWith('.openai.com')) {
+      return new OpenAIAdapter(apiKey);
+    }
+  } catch {
+    // endpoint is not a valid URL — fall through to generic adapter
   }
   return new GenericHttpAdapter(endpoint, apiKey);
 }
