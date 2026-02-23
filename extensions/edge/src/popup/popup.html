@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RealityCheck</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <img src="../icons/icon48.png" alt="" class="logo" />
+    <div class="title-block">
+      <h1>RealityCheck</h1>
+      <p class="subtitle">AI Content Watermarker</p>
+    </div>
+    <!-- Global toggle -->
+    <label class="toggle" title="Enable/disable globally">
+      <input type="checkbox" id="globalEnabled" />
+      <span class="slider"></span>
+    </label>
+  </header>
+
+  <section class="card">
+    <h2>This site</h2>
+    <div class="row">
+      <span>Enable on <strong id="siteHost"></strong></span>
+      <label class="toggle">
+        <input type="checkbox" id="siteEnabled" />
+        <span class="slider"></span>
+      </label>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Privacy</h2>
+    <div class="row">
+      <span>Local-only mode <small>(no network calls)</small></span>
+      <label class="toggle">
+        <input type="checkbox" id="localOnly" />
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div id="remoteSection" class="remote-section hidden">
+      <label>
+        Remote endpoint
+        <input type="url" id="remoteEndpoint" placeholder="https://your-api.example.com/detect" />
+      </label>
+      <label>
+        API key <small>(stored in extension storage only)</small>
+        <input type="password" id="remoteApiKey" placeholder="sk-..." autocomplete="off" />
+      </label>
+      <p class="privacy-notice">⚠ When remote mode is active, selected content will be sent to the configured endpoint. Ensure you trust the provider.</p>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Watermark behaviour</h2>
+
+    <label>
+      Mode
+      <select id="watermarkMode">
+        <option value="static">Static (always visible)</option>
+        <option value="flash">Flash (brief, then fades)</option>
+        <option value="pulse">Pulse (fades in/out)</option>
+        <option value="auto-hide">Auto-hide (hover to reveal)</option>
+      </select>
+    </label>
+
+    <label>
+      Position
+      <select id="watermarkPosition">
+        <option value="center">Center</option>
+        <option value="top-left">Top left</option>
+        <option value="top-right">Top right</option>
+        <option value="bottom">Bottom</option>
+      </select>
+    </label>
+
+    <label>
+      Opacity: <span id="opacityValue">70</span>%
+      <input type="range" id="watermarkOpacity" min="10" max="100" step="5" value="70" />
+    </label>
+
+    <label>
+      Animation duration: <span id="animDurValue">1500</span>ms
+      <input type="range" id="animDuration" min="500" max="5000" step="100" value="1500" />
+    </label>
+
+    <label>
+      Pulse frequency: <span id="pulseFreqValue">3000</span>ms
+      <input type="range" id="pulseFreq" min="1000" max="10000" step="500" value="3000" />
+    </label>
+  </section>
+
+  <section class="card">
+    <h2>Report feedback</h2>
+    <p class="disclaimer">Detection is probabilistic and may be incorrect.</p>
+    <div class="report-buttons">
+      <button id="reportFP" class="btn btn-secondary">Report false positive</button>
+      <button id="reportFN" class="btn btn-secondary">Report missed AI</button>
+    </div>
+    <p id="reportStatus" class="report-status hidden">Thank you for your feedback!</p>
+  </section>
+
+  <footer>
+    <span>RealityCheck v1.0.0</span>
+  </footer>
+
+  <script src="popup.js" type="module"></script>
+</body>
+</html>
