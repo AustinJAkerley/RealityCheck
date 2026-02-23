@@ -94,6 +94,12 @@ export interface ExtensionSettings {
    * API key for custom remote endpoints (advanced/dev only). Not needed for the default endpoint.
    */
   remoteApiKey: string;
+  /**
+   * Dev mode: when true, every image and video is immediately watermarked with a green
+   * "DEV: Watermarking Active" overlay, bypassing detection entirely.
+   * Default: false. Keep this OFF in production.
+   */
+  devMode: boolean;
   watermark: WatermarkConfig;
   siteSettings: Record<string, SiteSettings>;
 }
@@ -113,6 +119,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   detectionQuality: 'medium',
   remoteEndpoint: '',
   remoteApiKey: '',
+  devMode: false,
   watermark: DEFAULT_WATERMARK_CONFIG,
   siteSettings: {},
 };

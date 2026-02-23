@@ -16,6 +16,7 @@ import {
   ExtensionSettings,
   DetectorOptions,
   applyMediaWatermark,
+  applyDevModeWatermark,
   applyTextWatermark,
   WatermarkHandle,
 } from '@reality-check/core';
@@ -51,6 +52,11 @@ async function processImage(img: HTMLImageElement, settings: ExtensionSettings):
   if (handles.has(img)) return;
   if (!img.complete || img.naturalWidth < 100 || img.naturalHeight < 100) return;
 
+  if (settings.devMode) {
+    handles.set(img, applyDevModeWatermark(img, settings.watermark));
+    return;
+  }
+
   const opts = getDetectorOptions(settings);
   const result = await pipeline.analyzeImage(img, opts);
 
@@ -62,6 +68,11 @@ async function processImage(img: HTMLImageElement, settings: ExtensionSettings):
 
 async function processVideo(video: HTMLVideoElement, settings: ExtensionSettings): Promise<void> {
   if (handles.has(video)) return;
+
+  if (settings.devMode) {
+    handles.set(video, applyDevModeWatermark(video, settings.watermark));
+    return;
+  }
 
   const opts = getDetectorOptions(settings);
   const result = await pipeline.analyzeVideo(video, opts);

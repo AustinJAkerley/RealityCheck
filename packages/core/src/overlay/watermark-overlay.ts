@@ -271,6 +271,52 @@ export function applyMediaWatermark(
 }
 
 /**
+ * Apply a green dev-mode banner to an image or video element.
+ * Indicates that the watermarking pipeline is working — used during local testing.
+ * Shows "DEV: Watermarking Active" instead of an AI verdict.
+ */
+export function applyDevModeWatermark(
+  media: HTMLImageElement | HTMLVideoElement,
+  config: WatermarkConfig
+): WatermarkHandle {
+  injectStyles();
+
+  const wrapper = ensureWrapper(media);
+
+  const overlay = document.createElement('div');
+  overlay.className = 'rc-watermark rc-dev-mode';
+  overlay.setAttribute('aria-label', 'Dev mode: watermarking active');
+  overlay.style.setProperty('--rc-opacity', String(config.opacity / 100));
+  // Green badge — clearly distinguishable from the production red
+  overlay.style.background = 'rgba(20,160,60,0.75)';
+  overlay.style.border = '2px solid rgba(50,220,90,0.9)';
+
+  overlay.textContent = '🛠 DEV: Watermarking Active';
+
+  const badge = document.createElement('div');
+  badge.className = 'rc-badge';
+  badge.textContent = 'Disable Dev Mode when done testing';
+  overlay.appendChild(badge);
+
+  positionWatermark(overlay, wrapper, config.position);
+  wrapper.appendChild(overlay);
+
+  return {
+    remove() {
+      overlay.remove();
+      if (wrapper.classList.contains('rc-media-wrapper') && wrapper.children.length === 1) {
+        wrapper.parentNode?.insertBefore(media, wrapper);
+        wrapper.remove();
+      }
+    },
+    update(newConfig: WatermarkConfig) {
+      overlay.remove();
+      applyDevModeWatermark(media, newConfig);
+    },
+  };
+}
+
+/**
  * Apply inline text highlighting to a paragraph or block element.
  * Wraps the inner text in a highlighted span with a badge and tooltip.
  */

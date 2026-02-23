@@ -119,6 +119,16 @@
       API key <small>(only needed for custom endpoints)</small>
       <input type="password" id="remoteApiKey" placeholder="Optional" autocomplete="off" />
     </label>
+    <div class="row" style="margin-top:8px">
+      <span>Dev Mode <small style="color:#e67e22">⚠ Force-watermark all media (testing only)</small></span>
+      <label class="toggle">
+        <input type="checkbox" id="devMode" />
+        <span class="slider"></span>
+      </label>
+    </div>
+    <p id="devModeNote" class="privacy-notice hidden" style="color:#e67e22">
+      🛠 Dev Mode ON — every image &amp; video will show a green watermark regardless of AI detection. Disable before normal use.
+    </p>
   </details>
 
   <footer>

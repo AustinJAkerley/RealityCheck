@@ -28,6 +28,8 @@ const reportStatusEl = $<HTMLElement>('reportStatus');
 // Advanced fields
 const remoteEndpointEl = $<HTMLInputElement>('remoteEndpoint');
 const remoteApiKeyEl = $<HTMLInputElement>('remoteApiKey');
+const devModeEl = $<HTMLInputElement>('devMode');
+const devModeNoteEl = $<HTMLElement>('devModeNote');
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let settings: ExtensionSettings = DEFAULT_SETTINGS;
@@ -69,6 +71,8 @@ function reflectSettings(): void {
   // Advanced fields
   remoteEndpointEl.value = settings.remoteEndpoint ?? '';
   remoteApiKeyEl.value = settings.remoteApiKey ?? '';
+  devModeEl.checked = settings.devMode ?? false;
+  devModeNoteEl.classList.toggle('hidden', !settings.devMode);
 }
 
 function updateRemoteNotes(remoteEnabled: boolean): void {
@@ -168,6 +172,11 @@ remoteEndpointEl.addEventListener('change', async () => {
 });
 remoteApiKeyEl.addEventListener('change', async () => {
   settings = { ...settings, remoteApiKey: remoteApiKeyEl.value.trim() };
+  await save();
+});
+devModeEl.addEventListener('change', async () => {
+  settings = { ...settings, devMode: devModeEl.checked };
+  devModeNoteEl.classList.toggle('hidden', !devModeEl.checked);
   await save();
 });
 

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+body { font-family: system-ui; background: #1a1a2e; color: #eee; padding: 20px; }
+h2 { color: #e94560; }
+.grid { display: flex; gap: 16px; flex-wrap: wrap; margin: 20px 0; }
+img { width: 200px; height: 150px; object-fit: cover; border-radius: 8px; }
+/* Simulate extension overlay styles */
+@keyframes rc-flash {
+  0%   { opacity: var(--rc-opacity); }
+  80%  { opacity: var(--rc-opacity); }
+  100% { opacity: 0; }
+}
+@keyframes rc-pulse {
+  0%   { opacity: var(--rc-opacity); }
+  50%  { opacity: 0; }
+  100% { opacity: var(--rc-opacity); }
+}
+.rc-media-wrapper { position: relative; display: inline-block; }
+.rc-watermark {
+  position: absolute;
+  z-index: 9999;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-family: system-ui;
+  font-weight: 700;
+  font-size: 14px;
+  text-align: center;
+  text-transform: uppercase;
+  color: #fff;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+  background: rgba(220,30,30,0.55);
+  border: 2px solid rgba(255,60,60,0.8);
+  border-radius: 6px;
+  padding: 6px 12px;
+  box-sizing: border-box;
+  top: 50%; left: 50%;
+  transform: translate(-50%,-50%);
+  --rc-opacity: 0.7;
+  opacity: var(--rc-opacity);
+}
+.rc-watermark.rc-dev-mode {
+  background: rgba(20,160,60,0.75);
+  border: 2px solid rgba(50,220,90,0.9);
+}
+.rc-badge {
+  font-size: 0.7em;
+  margin-top: 3px;
+  font-weight: 400;
+  text-transform: none;
+}
+/* Popup preview */
+.popup-preview {
+  background: #2d2d44;
+  border-radius: 12px;
+  padding: 16px;
+  width: 320px;
+  font-size: 13px;
+}
+.popup-preview details { margin-top: 12px; background: #3a3a58; border-radius: 8px; padding: 8px; }
+.popup-preview summary { font-weight: 600; cursor: pointer; color: #aaa; }
+.popup-preview .row { display: flex; justify-content: space-between; align-items: center; margin: 8px 0; }
+.toggle-on { background: #27ae60; color: white; border-radius: 12px; padding: 2px 10px; font-size: 11px; font-weight: 700; }
+.toggle-off { background: #555; color: white; border-radius: 12px; padding: 2px 10px; font-size: 11px; font-weight: 700; }
+.dev-warning { color: #e67e22; font-size: 11px; background: rgba(230,126,34,0.15); border-radius: 4px; padding: 4px 8px; margin-top: 6px; }
+</style>
+</head>
+<body>
+
+<h2>Dev Mode — Force Watermark Demo</h2>
+<p>When <strong>Dev Mode</strong> is enabled in Advanced Settings, every image and video gets a green "🛠 DEV: Watermarking Active" overlay — confirming the pipeline is working before AI detection is relied upon.</p>
+
+<div style="display:flex; gap:40px; flex-wrap:wrap; align-items:flex-start;">
+
+  <div>
+    <h3 style="color:#aaa">Dev Mode OFF (normal)</h3>
+    <div class="grid">
+      <div class="rc-media-wrapper">
+        <img src="https://picsum.photos/200/150?random=1" alt="test" />
+        <!-- no watermark = detection found it's not AI -->
+      </div>
+      <div class="rc-media-wrapper">
+        <img src="https://picsum.photos/200/150?random=2" alt="test" />
+        <div class="rc-watermark" style="font-size:11px">
+          ⚠ Likely AI Generated
+          <div class="rc-badge">High confidence</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <h3 style="color:#27ae60">Dev Mode ON — all media watermarked</h3>
+    <div class="grid">
+      <div class="rc-media-wrapper">
+        <img src="https://picsum.photos/200/150?random=1" alt="test" />
+        <div class="rc-watermark rc-dev-mode" style="font-size:11px">
+          🛠 DEV: Watermarking Active
+          <div class="rc-badge">Disable Dev Mode when done</div>
+        </div>
+      </div>
+      <div class="rc-media-wrapper">
+        <img src="https://picsum.photos/200/150?random=2" alt="test" />
+        <div class="rc-watermark rc-dev-mode" style="font-size:11px">
+          🛠 DEV: Watermarking Active
+          <div class="rc-badge">Disable Dev Mode when done</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <h3 style="color:#aaa">Popup Advanced section</h3>
+    <div class="popup-preview">
+      <details open>
+        <summary>▶ Advanced settings</summary>
+        <div style="margin-top:8px">
+          <div style="margin-bottom:6px; font-size:12px; color:#aaa">Remote endpoint override <small>(leave blank for default)</small></div>
+          <input type="url" placeholder="https://api.realitycheck.ai/v1/classify" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:4px 8px;font-size:12px;box-sizing:border-box" />
+          <div style="margin-top:8px;margin-bottom:6px;font-size:12px;color:#aaa">API key <small>(only needed for custom endpoints)</small></div>
+          <input type="password" placeholder="Optional" style="width:100%;background:#222;color:#eee;border:1px solid #555;border-radius:4px;padding:4px 8px;font-size:12px;box-sizing:border-box" />
+          <div class="row" style="margin-top:10px">
+            <span>Dev Mode <small style="color:#e67e22">⚠ Force-watermark all media</small></span>
+            <span class="toggle-on">ON</span>
+          </div>
+          <div class="dev-warning">
+            🛠 Dev Mode ON — every image &amp; video will show a green watermark regardless of AI detection. Disable before normal use.
+          </div>
+        </div>
+      </details>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>
