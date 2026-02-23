@@ -170,7 +170,85 @@ Settings are stored in `chrome.storage.sync` (Chrome/Edge) or `browser.storage.s
 
 ---
 
-## Rate limiting & caching
+## Remote classifier architecture
+
+### When remote is triggered
+
+Remote classification is invoked only when the local classifier is **inconclusive** — i.e. the local combined score falls in the zone `[0.20, 0.65)`. Images that score below 0.20 ("clearly not AI") or 0.65 and above ("high-confidence AI") are handled locally without a network call. This keeps remote costs low and reduces latency for the majority of images.
+
+| Local score range | Decision | Remote call? |
+|---|---|---|
+| < 0.20 | Not AI (confident) | No |
+| 0.20 – 0.65 | Inconclusive — escalate | **Yes** |
+| ≥ 0.65 | Likely AI (confident) | No |
+
+> **Video note**: Video URL heuristics are binary (0 or 0.7). A score of 0 means the URL did not match known AI video platforms — not that the video is definitively non-AI. Videos therefore use a one-sided threshold (`score < 0.65` → inconclusive) so that unrecognised sources can still be escalated via frame capture when available.
+
+In dev mode, the watermark badge explicitly reports `Dev · Local Inconclusive → Remote` for images that fell in the inconclusive zone, making it easy to observe which images required escalation during development.
+
+### Remote classifier options
+
+Two architectural paths are feasible; both are supported today via `RemoteAdapter`:
+
+#### Option A — Hosted AI service proxy (current default)
+
+A lightweight Azure Functions / AWS Lambda proxy forwards the downscaled image (128 × 128 px JPEG) to an upstream vision API (OpenAI GPT-4o Vision, Anthropic Claude 3 Vision, or Google Gemini Vision) and normalises the response into `{ score, label }`.
+
+**Advantages**: No model maintenance, instantly benefits from frontier model improvements, easiest to deploy.
+**Disadvantages**: Per-call cost of upstream API, latency of two hops, terms-of-service constraints.
+
+Recommended upstream services (ranked by cost/accuracy trade-off):
+1. **OpenAI GPT-4o-mini** (vision) — $0.15 / 1M input tokens; good accuracy, fast.
+2. **Google Gemini 1.5 Flash** — very low cost, competitive accuracy.
+3. **Anthropic Claude 3 Haiku** — competitive, good refusal behaviour for edge cases.
+
+#### Option B — Purpose-built hosted classifier
+
+Deploy a fine-tuned binary image classifier (e.g. a ViT-B/16 or ResNet-50 trained on synthetic vs. real datasets) on a managed GPU service. This avoids per-inference API costs after initial training and keeps data fully within our control.
+
+**Recommended stack**: Azure Container Apps (GPU SKU) or AWS SageMaker Serverless Inference.
+**Training data**: Laion-AI/LAION-5B (real) + curated AI image datasets (Midjourney, SDXL, DALL-E 3 outputs). Fine-tune on [CLIP](https://github.com/openai/CLIP) + linear head or use the CNNDetect approach (Wang et al., "CNN-generated images are surprisingly easy to spot… for now", CVPR 2020). For broader generalisation consider UnivFD (Ojha et al., "Towards Universal Fake Image Detection by Generalizing the Concept of Blending", CVPR 2023).
+**Expected accuracy**: ≥ 80 % on held-out test sets from major diffusion models.
+
+### Cloud architecture (Option B detail)
+
+```
+Browser extension
+    │ POST /v1/classify
+    │ { contentType, imageHash, imageDataUrl (128×128 JPEG) }
+    ▼
+Azure API Management (rate-limiting, auth, DDoS protection)
+    │
+    ▼
+Azure Container Apps — classifier microservice
+    ├── ONNX Runtime inference (GPU-optimised)
+    ├── Redis cache layer (keyed by SHA-256 of image bytes; TTL 24 h)
+    └── Returns { score: float32, label: "ai"|"human"|"uncertain", version: string }
+```
+
+### Billing model
+
+| Tier | Monthly requests | Monthly cost estimate |
+|---|---|---|
+| Free (default endpoint) | ≤ 10 000 | Covered by project budget |
+| Standard | 10 001 – 500 000 | $0.002 / request above free tier |
+| Pro (registered extension users) | Unlimited | Flat $4.99 / month |
+
+Rate limiting is enforced at two layers:
+1. **Client-side** (`RateLimiter` token bucket): images — 10/min; videos — 5/min.
+2. **Server-side** (Azure API Management): 60 requests/min per extension instance (keyed by a rotating ephemeral client token issued at install time, never tied to a user account).
+
+### Throttling & abuse prevention
+
+- The extension sends a short-lived (24 h) **ephemeral session token** minted at first install and rotated daily. The token is a HMAC-SHA256 of `(install_id ∥ date)` computed with a per-build shared signing key embedded in the extension package. The server verifies the HMAC without storing PII.
+- Payloads are intentionally minimal: only a 128 × 128 JPEG thumbnail is sent — never the full-resolution image, user identity, or page URL.
+- If the hosted endpoint becomes unavailable the extension gracefully falls back to local-only classification with no user-visible error.
+
+### Privacy
+
+All remote calls use HTTPS. No cookies, no user-agent fingerprinting, no page URL is transmitted. The session token is rotated daily and cannot be linked across days. The server does not log or store image thumbnails — only the resulting `score` and `label` are used.
+
+
 
 - **DetectionCache**: LRU-like in-memory cache keyed by content hash or URL. TTL: 5 minutes, max 200 entries.
 - **RateLimiter**: Token-bucket, 10 tokens per minute (text), 5 tokens per minute (video). Prevents flooding remote APIs.

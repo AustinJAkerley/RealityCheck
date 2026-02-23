@@ -38,6 +38,12 @@ export interface DetectionResult {
   source: 'local' | 'remote';
   /** Set to true when the photorealism pre-filter determined the image is not photorealistic */
   skippedByPreFilter?: boolean;
+  /**
+   * Set to true when the local classifier score fell in the inconclusive zone [0.20, 0.65)
+   * and remote classification was needed to reach a decision.
+   * Useful in dev mode to surface which images required remote escalation.
+   */
+  localInconclusive?: boolean;
   details?: string;
 }
 

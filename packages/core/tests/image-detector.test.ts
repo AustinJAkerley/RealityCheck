@@ -205,6 +205,42 @@ describe('ImageDetector (remote disabled)', () => {
   });
 });
 
+// ── localInconclusive flag ────────────────────────────────────────────────────
+
+describe('ImageDetector localInconclusive', () => {
+  const opts = { remoteEnabled: false, detectionQuality: 'low' as const };
+
+  test('high-confidence AI CDN URL sets localInconclusive=false (score >= 0.65)', async () => {
+    // midjourney CDN → computeLocalImageScore returns 0.70 (>= LOCAL_AI_HIGH 0.65)
+    const detector = new ImageDetector();
+    const result = await detector.detect('https://midjourney.com/img.png', opts);
+    expect(result.localInconclusive).toBe(false);
+    expect(result.score).toBeGreaterThanOrEqual(0.65);
+  });
+
+  test('low-scoring non-AI URL sets localInconclusive=false (score < 0.20)', async () => {
+    // Plain URL with no AI signals → score ~0 → < LOCAL_AI_LOW
+    const detector = new ImageDetector();
+    const result = await detector.detect('https://example.com/banner.jpg', opts);
+    expect(result.localInconclusive).toBe(false);
+    expect(result.score).toBeLessThan(0.20);
+  });
+
+  test('localInconclusive is always a boolean', async () => {
+    const detector = new ImageDetector();
+    const result = await detector.detect('https://example.com/img.png', opts);
+    expect(typeof result.localInconclusive).toBe('boolean');
+  });
+
+  test('score in [0.20, 0.65) from computeLocalImageScore is the inconclusive zone', () => {
+    // Verify the threshold logic: power-of-two dims, no CDN → score 0.30 → inconclusive
+    const score = computeLocalImageScore('https://example.com/img.jpg', 512, 512);
+    expect(score).toBeGreaterThanOrEqual(0.20);
+    expect(score).toBeLessThan(0.65);
+    // This score would produce localInconclusive=true when processed by the detector
+  });
+});
+
 // ── computeVisualAIScore ──────────────────────────────────────────────────────
 
 describe('computeVisualAIScore', () => {

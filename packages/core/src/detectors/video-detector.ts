@@ -59,6 +59,13 @@ function captureVideoFrame(video: HTMLVideoElement, maxDim = 128): string | null
   }
 }
 
+/**
+ * Local score thresholds for the "inconclusive" zone — mirrors image-detector.
+ * Remote escalation is only triggered when the URL heuristic score is inconclusive.
+ */
+const LOCAL_AI_LOW = 0.20;
+const LOCAL_AI_HIGH = 0.65;
+
 function scoreToConfidence(score: number): DetectionResult['confidence'] {
   if (score >= 0.65) return 'high';
   if (score >= 0.35) return 'medium';
@@ -83,10 +90,16 @@ export class VideoDetector implements Detector {
 
     let finalScore = localScore;
     let source: DetectionResult['source'] = 'local';
+    // Video URL heuristics are binary: 0 (unknown platform) or 0.7 (known AI platform).
+    // A score of 0 does NOT mean "clearly not AI" the way it does for images — the URL
+    // database is small and the platform may simply be unlisted.  We therefore treat any
+    // video that hasn't been confidently flagged by URL (score < LOCAL_AI_HIGH) as
+    // inconclusive so the pipeline can attempt frame-based remote analysis when available.
+    const localInconclusive = localScore < LOCAL_AI_HIGH;
 
     // Step 2 & 3: Frame capture + remote classification.
-    // Escalate to remote whenever enabled; frame capture adds richer payload.
-    if (options.remoteEnabled && video) {
+    // Only escalate to remote when local result is inconclusive [LOW, HIGH).
+    if (options.remoteEnabled && video && localInconclusive) {
       if (this.rateLimiter.consume()) {
         try {
           const frameDataUrl = captureVideoFrame(video);
@@ -113,6 +126,7 @@ export class VideoDetector implements Detector {
       confidence: scoreToConfidence(finalScore),
       score: finalScore,
       source,
+      localInconclusive,
     };
 
     this.cache.set(cacheKey, result);

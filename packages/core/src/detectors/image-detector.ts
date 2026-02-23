@@ -454,6 +454,18 @@ function downscaleImage(img: HTMLImageElement, maxDim = 128): string | null {
 
 // ── Detector class ───────────────────────────────────────────────────────────
 
+/**
+ * Local score thresholds for the "inconclusive" zone.
+ * - Score < LOCAL_AI_LOW   → clearly not AI; skip remote, return local result.
+ * - Score in [LOW, HIGH)   → inconclusive; escalate to remote when enabled.
+ * - Score >= LOCAL_AI_HIGH → likely AI with high local confidence; use local result.
+ *
+ * Keeping the inconclusive band wide (0.20–0.65) ensures we escalate any
+ * borderline case rather than relying solely on coarse local heuristics.
+ */
+const LOCAL_AI_LOW = 0.20;
+const LOCAL_AI_HIGH = 0.65;
+
 export class ImageDetector implements Detector {
   readonly contentType = 'image' as const;
   private readonly cache = new DetectionCache<DetectionResult>();
@@ -513,10 +525,12 @@ export class ImageDetector implements Detector {
 
     let finalScore = combinedLocalScore;
     let source: DetectionResult['source'] = 'local';
+    const localInconclusive = combinedLocalScore >= LOCAL_AI_LOW && combinedLocalScore < LOCAL_AI_HIGH;
 
     // ── Step 3: Remote classification ─────────────────────────────────────────
-    // Always send to remote when enabled and the image passed the pre-filter.
-    if (options.remoteEnabled && img) {
+    // Only escalate to remote when local result is inconclusive [LOW, HIGH).
+    // Clearly non-AI (< LOW) and high-confidence AI (>= HIGH) stay local-only.
+    if (options.remoteEnabled && img && localInconclusive) {
       if (this.rateLimiter.consume()) {
         try {
           const dataUrl = downscaleImage(img);
@@ -541,6 +555,7 @@ export class ImageDetector implements Detector {
       confidence: scoreToConfidence(finalScore),
       score: finalScore,
       source,
+      localInconclusive,
     };
 
     this.cache.set(cacheKey, result);

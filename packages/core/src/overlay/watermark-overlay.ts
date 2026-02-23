@@ -294,10 +294,15 @@ export function applyMediaWatermark(
  * Shows "Not AI Generated" to confirm the watermarking pipeline is active
  * during local testing. Visually identical in style to the production mark
  * but green rather than red.
+ *
+ * When `localInconclusive` is true the badge also reports that the local
+ * classifier was uncertain and remote escalation was triggered, so developers
+ * can identify which images fell into the inconclusive zone.
  */
 export function applyDevModeWatermark(
   media: HTMLImageElement | HTMLVideoElement,
-  config: WatermarkConfig
+  config: WatermarkConfig,
+  localInconclusive?: boolean
 ): WatermarkHandle {
   injectStyles();
 
@@ -320,7 +325,9 @@ export function applyDevModeWatermark(
 
   const badge = document.createElement('div');
   badge.className = 'rc-badge';
-  badge.textContent = 'Dev Mode — disable before shipping';
+  badge.textContent = localInconclusive
+    ? 'Dev · Local Inconclusive → Remote'
+    : 'Dev Mode — disable before shipping';
   overlay.appendChild(badge);
 
   positionWatermark(overlay, config.position);
@@ -336,7 +343,7 @@ export function applyDevModeWatermark(
     },
     update(newConfig: WatermarkConfig) {
       overlay.remove();
-      applyDevModeWatermark(media, newConfig);
+      applyDevModeWatermark(media, newConfig, localInconclusive);
     },
   };
 }
