@@ -2,7 +2,7 @@
  * RealityCheck Popup Script
  * Loads settings, reflects them in the UI, and saves changes.
  */
-import { ExtensionSettings, DEFAULT_SETTINGS } from '../../../packages/core/src/index.js';
+import { ExtensionSettings, DEFAULT_SETTINGS } from '@reality-check/core';
 
 // ── Element references ────────────────────────────────────────────────────────
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;

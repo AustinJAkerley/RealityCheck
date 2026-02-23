@@ -5,6 +5,23 @@
 - **Node.js** 18+ and **npm** 9+
 - A modern browser: Chrome 88+, Edge 88+, or Firefox 109+
 
+### Installing Node.js and npm
+
+If you don't have Node.js and npm installed:
+
+1. Go to [https://nodejs.org](https://nodejs.org)
+2. Download the **LTS** version (18 or later)
+3. Run the installer — npm is bundled with Node.js
+
+After installation, open a new terminal and verify:
+
+```bash
+node --version   # should be 18+
+npm --version    # should be 9+
+npm install
+
+```
+
 ---
 
 ## 1. Install dependencies & build
@@ -12,11 +29,8 @@
 ```bash
 # From the repository root
 npm install
-
 # Build the shared core library
-cd packages/core
-npm run build
-cd ../..
+npm run build --workspace=packages/core
 ```
 
 > The browser extension source files reference `packages/core/src` directly via TypeScript path aliases, so you only need to build the core if you want the compiled `.d.ts` files for IDE support.
