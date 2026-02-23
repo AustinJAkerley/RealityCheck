@@ -562,23 +562,29 @@ export class ImageDetector implements Detector {
     }
 
     // ── Step 2c: EXIF metadata analysis ──────────────────────────────────────
-    // Obtain a full-resolution data URL for EXIF and C2PA scanning.
-    // Only attempt for same-origin images (downscaling may drop EXIF, so we
-    // use a lossless PNG capture for metadata scanning).
+    // EXIF and C2PA metadata reside in the original image binary.
+    // Canvas re-encoding strips all metadata, so we fetch the original bytes
+    // via the image src URL (succeeds for same-origin and CORS-enabled images;
+    // fails silently for cross-origin/opaque responses).
     let metadataDataUrl: string | null = null;
-    if (img) {
+    if (src && /^https?:\/\//.test(src)) {
       try {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.naturalWidth || 1;
-        canvas.height = img.naturalHeight || 1;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(img, 0, 0);
-          metadataDataUrl = canvas.toDataURL('image/png');
+        const resp = await fetch(src, { cache: 'force-cache' });
+        if (resp.ok) {
+          const blob = await resp.blob();
+          metadataDataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(blob);
+          });
         }
       } catch {
-        // Cross-origin — skip metadata analysis
+        // CORS block, network error, or unsupported environment — skip
       }
+    } else if (src && src.startsWith('data:')) {
+      // Already a data URL — use directly
+      metadataDataUrl = src;
     }
 
     let exifScore = 0;

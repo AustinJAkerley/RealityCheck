@@ -182,8 +182,11 @@ async function analyzeVideoFrames(
     diffs.reduce((a, b) => a + (b - meanDiff) ** 2, 0) / diffs.length;
 
   // Deepfake temporal signal:
-  // Very low mean difference across ALL frames (< 3 lum units) = nearly static,
-  // which is unusual for real video — could indicate looped/generated content.
+  // Very low mean difference across ALL frames (< 3 lum units on a 0–255 scale)
+  // = nearly static content, which is unusual for real video (even a talking-head
+  // video shows eye blinks and subtle motion). Threshold of 3 was chosen as the
+  // lower bound of observable luminance change for a 64×64 sample of real video
+  // (typical talking-head: ~5–15 lum units; looped/generated: < 3).
   // High variance in frame differences = inconsistent motion = deepfake artefact.
   const staticScore = meanDiff < 3 ? 0.25 : 0; // nearly static
   const inconsistencyScore = Math.min(0.25, diffVariance / 500);
@@ -250,9 +253,11 @@ export class VideoDetector implements Detector {
     if (options.remoteEnabled && video) {
       if (this.rateLimiter.consume()) {
         try {
-          // Use first captured frame from multi-frame analysis, or fall back to single capture
+          // Prefer frames from multi-frame analysis; fall back to a fresh single-frame
+          // capture only when multi-frame analysis returned no frames (e.g. video not
+          // yet loaded, zero dimensions). Both paths can return null on cross-origin.
           const frameDataUrl =
-            capturedFrames[0] ?? captureVideoFrame(video);
+            capturedFrames.length > 0 ? capturedFrames[0] : captureVideoFrame(video);
           if (frameDataUrl) {
             const imageHash = hashDataUrl(frameDataUrl);
             const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;

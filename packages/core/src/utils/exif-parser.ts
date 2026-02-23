@@ -160,6 +160,9 @@ function readInt32(bytes: Uint8Array, offset: number, littleEndian: boolean): nu
 }
 
 function readAscii(bytes: Uint8Array, offset: number, count: number): string {
+  // EXIF ASCII strings: the `count` field includes the NUL terminator, so the
+  // printable content occupies at most `count - 1` bytes. We also stop early on
+  // the first NUL byte for robustness against malformed data.
   let result = '';
   for (let i = 0; i < count - 1 && offset + i < bytes.length; i++) {
     const c = bytes[offset + i];
@@ -221,7 +224,7 @@ function extractTagValue(
   bytes: Uint8Array,
   littleEndian: boolean
 ): string | number | null {
-  const { tag, type, count, valueOffset } = entry;
+  const { type, count, valueOffset } = entry;
   switch (type) {
     case TYPE_ASCII:
       return readAscii(bytes, valueOffset, count);
@@ -242,7 +245,6 @@ function extractTagValue(
     default:
       return null;
   }
-  void tag; // suppress unused warning
 }
 
 /**
