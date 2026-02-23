@@ -1,0 +1,17 @@
+{
+  "name": "reality-check-edge",
+  "version": "1.0.0",
+  "description": "RealityCheck Edge Extension",
+  "private": true,
+  "scripts": {
+    "build": "node build.js",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@reality-check/core": "*"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.268",
+    "typescript": "^5.4.5"
+  }
+}

@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RealityCheck – Video Detection Demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 0 auto; padding: 24px; background: #f5f5f5; color: #222; }
+    h1 { color: #e94560; }
+    .card { background: #fff; border-radius: 8px; padding: 20px; margin: 16px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    .label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #888; margin-bottom: 8px; }
+    video { width: 100%; border-radius: 4px; background: #000; }
+    .note { font-size: 12px; color: #666; margin-top: 8px; font-style: italic; }
+  </style>
+</head>
+<body>
+  <h1>🎬 RealityCheck — Video Detection Demo</h1>
+  <p>Load this page with the RealityCheck extension active to see videos labelled.</p>
+  <p><strong>Note:</strong> For video frame analysis, the video must be same-origin (not cross-origin).
+     Replace the placeholder sources with real video URLs to test detection.</p>
+
+  <div class="card">
+    <div class="label">Sample 1 — Simulated AI video (URL heuristic)</div>
+    <!-- A real RunwayML or Sora URL would trigger the CDN heuristic -->
+    <video
+      controls
+      width="640"
+      height="360"
+      data-rc-test="ai-video"
+    >
+      <!-- Replace this with a real AI video URL, e.g., from RunwayML or Sora -->
+      <source src="https://www.w3schools.com/html/mov_bbb.mp4" type="video/mp4" />
+      Your browser does not support the video element.
+    </video>
+    <div class="note">
+      Replace the <code>src</code> with a URL containing "runwayml", "sora.openai", "pika.art", etc.
+      to trigger the URL-based AI video heuristic.
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="label">Sample 2 — Standard video (should not be flagged)</div>
+    <video
+      controls
+      width="640"
+      height="360"
+      data-rc-test="human-video"
+    >
+      <source src="https://www.w3schools.com/html/movie.mp4" type="video/mp4" />
+      Your browser does not support the video element.
+    </video>
+    <div class="note">Standard MP4 from a neutral host — should score low.</div>
+  </div>
+
+  <div class="card">
+    <div class="label">Frame capture test</div>
+    <p>
+      When remote detection is enabled, the extension periodically captures a frame from visible videos
+      (same-origin only) and sends a downscaled thumbnail to the configured remote classifier endpoint.
+      Cross-origin videos (e.g., YouTube embeds) cannot be frame-captured due to browser CORS policies.
+    </p>
+    <div class="note">
+      To test frame capture: host a video on the same origin as this test page, load the page via
+      a local web server (e.g., <code>npx serve test-pages</code>), and enable remote detection in the popup.
+    </div>
+  </div>
+</body>
+</html>

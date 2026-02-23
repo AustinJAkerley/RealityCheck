@@ -1,0 +1,17 @@
+{
+  "name": "reality-check-chrome",
+  "version": "1.0.0",
+  "description": "RealityCheck Chrome Extension",
+  "private": true,
+  "scripts": {
+    "build": "node build.js",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@reality-check/core": "*"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.268",
+    "typescript": "^5.4.5"
+  }
+}

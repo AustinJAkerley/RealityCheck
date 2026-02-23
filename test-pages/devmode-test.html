@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<title>RealityCheck — Watermark Style Demo</title>
+<style>
+body { font-family: system-ui; background: #1a1a2e; color: #eee; padding: 20px; }
+h2 { color: #e94560; }
+h3 { margin: 12px 0 6px; font-size: 14px; }
+.grid { display: flex; gap: 20px; flex-wrap: wrap; margin: 12px 0 24px; align-items: flex-start; }
+
+/* ── Wrapper / image sizing ──────────────────────────────────────────── */
+.rc-media-wrapper { position: relative; display: inline-block; }
+.rc-media-wrapper img  { display: block; border-radius: 6px; }
+
+/* ── Diagonal watermark — stock-photo style ─────────────────────────── */
+@keyframes rc-flash {
+  0%   { opacity: var(--rc-opacity); }
+  80%  { opacity: var(--rc-opacity); }
+  100% { opacity: 0; }
+}
+@keyframes rc-pulse {
+  0%   { opacity: var(--rc-opacity); }
+  50%  { opacity: 0; }
+  100% { opacity: var(--rc-opacity); }
+}
+.rc-watermark {
+  position: absolute;
+  z-index: 9999;
+  pointer-events: none;
+  user-select: none;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: none;
+  /* Red + white halo */
+  color: rgba(210, 30, 30, 0.72);
+  text-shadow:
+    0 0 8px rgba(255, 255, 255, 0.95),
+    0 0 16px rgba(255, 255, 255, 0.55),
+    1px 1px 3px rgba(0, 0, 0, 0.45);
+  background: none;
+  border: none;
+  padding: 0;
+  white-space: nowrap;
+  /* Default: centred diagonal */
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-40deg);
+  --rc-opacity: 0.85;
+  opacity: var(--rc-opacity);
+}
+.rc-watermark.rc-dev-mode {
+  color: rgba(20, 160, 60, 0.80);
+}
+.rc-watermark .rc-badge {
+  display: block;
+  font-size: 0.5em;
+  margin-top: 2px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  opacity: 0.80;
+}
+.rc-watermark.rc-mode-flash { animation: rc-flash 1.5s ease forwards; }
+.rc-watermark.rc-mode-pulse { animation: rc-pulse 3s ease-in-out infinite; }
+</style>
+</head>
+<body>
+
+<h2>RealityCheck — Watermark Style Demo</h2>
+<p>Shows the <strong>diagonal stock-photo-style</strong> watermark at various image sizes.
+   Font size ≈ 9% of the shorter dimension, clamped 12–56 px — never covers the whole image.</p>
+
+<h3 style="color:#e94560">Normal mode: AI flagged → red diagonal "Likely AI-Generated"</h3>
+<div class="grid">
+
+  <!-- Small image (100×75) -->
+  <div>
+    <div style="color:#aaa;font-size:11px;margin-bottom:4px">100×75 (small thumbnail)</div>
+    <div class="rc-media-wrapper">
+      <img src="https://picsum.photos/100/75?random=10" width="100" height="75" alt="small" />
+      <div class="rc-watermark" style="font-size:12px">
+        Likely AI-Generated
+        <div class="rc-badge">Low confidence</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Medium image (250×200) -->
+  <div>
+    <div style="color:#aaa;font-size:11px;margin-bottom:4px">250×200 (medium)</div>
+    <div class="rc-media-wrapper">
+      <img src="https://picsum.photos/250/200?random=11" width="250" height="200" alt="medium" />
+      <div class="rc-watermark" style="font-size:18px">
+        Likely AI-Generated
+        <div class="rc-badge">Medium confidence</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Large image (400×300) -->
+  <div>
+    <div style="color:#aaa;font-size:11px;margin-bottom:4px">400×300 (large)</div>
+    <div class="rc-media-wrapper">
+      <img src="https://picsum.photos/400/300?random=12" width="400" height="300" alt="large" />
+      <div class="rc-watermark" style="font-size:27px">
+        Likely AI-Generated
+        <div class="rc-badge">High confidence</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Square (200×200) -->
+  <div>
+    <div style="color:#aaa;font-size:11px;margin-bottom:4px">200×200 (square, no watermark — not AI)</div>
+    <div class="rc-media-wrapper">
+      <img src="https://picsum.photos/200/200?random=13" width="200" height="200" alt="square" />
+      <!-- No watermark: detector said not AI-generated -->
+    </div>
+  </div>
+
+</div>
+
+<h3 style="color:#27ae60">Dev Mode ON: all images → green diagonal "Not AI Generated"</h3>
+<div class="grid">
+
+  <div>
+    <div style="color:#aaa;font-size:11px;margin-bottom:4px">100×75</div>
+    <div class="rc-media-wrapper">
+      <img src="https://picsum.photos/100/75?random=20" width="100" height="75" alt="dev small" />
+      <div class="rc-watermark rc-dev-mode" style="font-size:12px">
+        Not AI Generated
+        <div class="rc-badge">Dev Mode — disable before shipping</div>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div style="color:#aaa;font-size:11px;margin-bottom:4px">250×200</div>
+    <div class="rc-media-wrapper">
+      <img src="https://picsum.photos/250/200?random=21" width="250" height="200" alt="dev medium" />
+      <div class="rc-watermark rc-dev-mode" style="font-size:18px">
+        Not AI Generated
+        <div class="rc-badge">Dev Mode — disable before shipping</div>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div style="color:#aaa;font-size:11px;margin-bottom:4px">400×300</div>
+    <div class="rc-media-wrapper">
+      <img src="https://picsum.photos/400/300?random=22" width="400" height="300" alt="dev large" />
+      <div class="rc-watermark rc-dev-mode" style="font-size:27px">
+        Not AI Generated
+        <div class="rc-badge">Dev Mode — disable before shipping</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<h3 style="color:#aaa">Position variants (center / top-left / top-right / bottom)</h3>
+<div class="grid">
+  <div>
+    <div style="color:#aaa;font-size:11px;margin-bottom:4px">center (default)</div>
+    <div class="rc-media-wrapper">
+      <img src="https://picsum.photos/240/180?random=30" width="240" height="180" alt="center" />
+      <div class="rc-watermark" style="font-size:16px;top:50%;left:50%">Likely AI-Generated</div>
+    </div>
+  </div>
+  <div>
+    <div style="color:#aaa;font-size:11px;margin-bottom:4px">top-left</div>
+    <div class="rc-media-wrapper">
+      <img src="https://picsum.photos/240/180?random=31" width="240" height="180" alt="top-left" />
+      <div class="rc-watermark" style="font-size:16px;top:28%;left:32%">Likely AI-Generated</div>
+    </div>
+  </div>
+  <div>
+    <div style="color:#aaa;font-size:11px;margin-bottom:4px">bottom</div>
+    <div class="rc-media-wrapper">
+      <img src="https://picsum.photos/240/180?random=32" width="240" height="180" alt="bottom" />
+      <div class="rc-watermark" style="font-size:16px;top:72%;left:50%">Likely AI-Generated</div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RealityCheck – Text Detection Demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 0 auto; padding: 24px; background: #f5f5f5; color: #222; }
+    h1 { color: #e94560; }
+    .card { background: #fff; border-radius: 8px; padding: 20px; margin: 16px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    .label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #888; margin-bottom: 6px; }
+    p { line-height: 1.7; }
+    .note { font-size: 12px; color: #888; margin-top: 8px; font-style: italic; }
+  </style>
+</head>
+<body>
+  <h1>🔍 RealityCheck — Text Detection Demo</h1>
+  <p>Load this page with the RealityCheck extension active to see text blocks labelled.</p>
+
+  <div class="card">
+    <div class="label">Sample 1 — Likely AI-generated (high AI signal)</div>
+    <p id="ai-text-1">
+      As an AI language model, I'm happy to help you understand this topic. Certainly, here is a comprehensive
+      overview of the subject matter. It is worth noting that this area has many important dimensions to consider.
+      Ultimately, it is crucial to approach this with a balanced perspective. In today's world, we must examine all
+      perspectives carefully. There are several key factors to consider here. First, we must examine the context
+      thoroughly. Second, we need to analyse the evidence objectively and synthesise our findings appropriately.
+      Of course, here's a summary of the key points that you should be aware of when approaching this topic.
+    </p>
+    <div class="note">Contains multiple AI filler phrases — should be flagged.</div>
+  </div>
+
+  <div class="card">
+    <div class="label">Sample 2 — Human text (low AI signal)</div>
+    <p id="human-text-1">
+      Yesterday I went hiking in the mountains with my dog, Biscuit. The trail was muddier than I expected after
+      last week's rain, and we had to take a longer route round the fallen tree near the third mile marker.
+      Biscuit found a stick and refused to put it down for the rest of the walk, which made the scramble up the
+      granite steps rather amusing. We stopped at the viewpoint around noon and shared a sandwich — well, I had
+      most of it. The view was worth the effort; you could see three different valleys from up there.
+    </p>
+    <div class="note">Natural narrative — should not be flagged.</div>
+  </div>
+
+  <div class="card">
+    <div class="label">Sample 3 — Neutral / ambiguous</div>
+    <p id="neutral-text-1">
+      The water cycle is a continuous process by which water evaporates from the surface of the earth, rises into
+      the atmosphere, cools and condenses into clouds, and falls again as precipitation. This cycle is fundamental
+      to all life on Earth. It distributes fresh water around the planet and regulates temperature in ways that make
+      habitable environments possible. Without the water cycle, most terrestrial ecosystems would collapse within
+      a matter of years.
+    </p>
+    <div class="note">Factual writing — may or may not be flagged depending on heuristics.</div>
+  </div>
+</body>
+</html>

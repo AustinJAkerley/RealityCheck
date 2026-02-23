@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RealityCheck – Image Detection Demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 1000px; margin: 0 auto; padding: 24px; background: #f5f5f5; color: #222; }
+    h1 { color: #e94560; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; margin-top: 16px; }
+    .card { background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    .card img { width: 100%; height: 200px; object-fit: cover; display: block; }
+    .card-body { padding: 14px; }
+    .label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #888; margin-bottom: 4px; }
+    .note { font-size: 12px; color: #666; margin-top: 4px; font-style: italic; }
+  </style>
+</head>
+<body>
+  <h1>🖼 RealityCheck — Image Detection Demo</h1>
+  <p>Load this page with the RealityCheck extension active to see images labelled.</p>
+  <p><strong>Note:</strong> Images below use placeholder URLs for demonstration.
+     Replace with real images from known AI image services (Midjourney, DALL-E, etc.) to test URL-based detection.
+     Use locally-hosted images or enable remote detection for pixel-level analysis.</p>
+
+  <div class="grid">
+    <!-- AI image placeholder — URL pattern triggers heuristic -->
+    <div class="card">
+      <img
+        src="https://via.placeholder.com/512x512/e94560/ffffff?text=AI+Image+Placeholder"
+        alt="AI-generated image example"
+        width="512"
+        height="512"
+        data-rc-test="ai-image"
+      />
+      <div class="card-body">
+        <div class="label">Sample 1 — AI image (512×512 power-of-two)</div>
+        <div class="note">Power-of-two dimensions score higher. Replace with a Midjourney/DALL-E URL to trigger CDN detection.</div>
+      </div>
+    </div>
+
+    <!-- Human photo placeholder -->
+    <div class="card">
+      <img
+        src="https://via.placeholder.com/1920x1200/4CAF50/ffffff?text=Human+Photo+Placeholder"
+        alt="Human photograph example"
+        width="1920"
+        height="1200"
+        data-rc-test="human-image"
+      />
+      <div class="card-body">
+        <div class="label">Sample 2 — Human photo (1920×1200)</div>
+        <div class="note">Non-power-of-two dimensions, no known AI CDN URL — should score low.</div>
+      </div>
+    </div>
+
+    <!-- Midjourney-like URL simulation -->
+    <div class="card">
+      <img
+        src="https://via.placeholder.com/1024x1024/2196F3/ffffff?text=DALL-E+Style"
+        alt="Simulated AI-generated image"
+        width="1024"
+        height="1024"
+        data-rc-test="simulated-ai"
+        data-rc-src-override="https://images.openai.com/dalle-3/example.png"
+      />
+      <div class="card-body">
+        <div class="label">Sample 3 — Simulated DALL-E (1024×1024)</div>
+        <div class="note">1024×1024 power-of-two. Add a real DALL-E URL as <code>src</code> to test CDN detection.</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Demonstration: replace src with data-rc-src-override if present
+    document.querySelectorAll('[data-rc-src-override]').forEach(img => {
+      // Comment out the line below to avoid CORS issues with placeholder URLs
+      // img.src = img.dataset.rcSrcOverride;
+    });
+  </script>
+</body>
+</html>
