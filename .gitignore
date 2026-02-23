@@ -6,3 +6,6 @@ dist-tests/
 .DS_Store
 *.log
 tmpclaude*
+# Compiled output — should only live in dist/, not src/
+packages/core/src/**/*.js
+packages/core/src/**/*.d.ts
