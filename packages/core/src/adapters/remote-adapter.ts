@@ -4,17 +4,19 @@
  * All remote adapters implement the RemoteAdapter interface so the
  * detection pipeline can swap providers without changing detector logic.
  *
- * Privacy: no content is sent off-device unless the user has enabled
- * "Remote detection" mode and explicitly opted in.
+ * Default flow: POST to DEFAULT_REMOTE_ENDPOINT with no auth header.
+ * The Azure-hosted proxy handles downstream authentication; users do not
+ * need to provide API keys. API keys are only used for custom dev endpoints.
  */
 import type { ContentType, RemoteAdapter, RemoteClassificationResult, RemotePayload } from '../types.js';
+import { DEFAULT_REMOTE_ENDPOINT } from '../types.js';
 
 /**
- * Generic HTTP adapter that posts to a user-configured endpoint.
- * Expected response: { score: number; label: string }
+ * Generic HTTP adapter that posts to a configured endpoint.
+ * Omits the Authorization header when no API key is provided (default flow).
  */
 export class GenericHttpAdapter implements RemoteAdapter {
-  constructor(private readonly endpoint: string, private readonly apiKey: string) {}
+  constructor(private readonly endpoint: string, private readonly apiKey: string = '') {}
 
   async classify(
     contentType: ContentType,
@@ -42,9 +44,8 @@ export class GenericHttpAdapter implements RemoteAdapter {
 }
 
 /**
- * OpenAI-compatible adapter using chat completions.
- * Sends text content to a model (e.g. gpt-4o) and parses the response.
- * Only text is supported for now; images can be added via vision API.
+ * OpenAI-compatible adapter — for development/advanced use only.
+ * The default extension flow uses GenericHttpAdapter against our hosted endpoint.
  */
 export class OpenAIAdapter implements RemoteAdapter {
   private readonly model: string;
@@ -64,8 +65,6 @@ export class OpenAIAdapter implements RemoteAdapter {
     payload: RemotePayload
   ): Promise<RemoteClassificationResult> {
     if (contentType !== 'text' || !payload.text) {
-      // Image/video classification via OpenAI requires additional setup;
-      // fall back to a neutral score if unsupported payload
       return { score: 0.5, label: 'unsupported' };
     }
 
@@ -108,21 +107,23 @@ export class OpenAIAdapter implements RemoteAdapter {
 }
 
 /**
- * Create the appropriate remote adapter from settings.
+ * Create the appropriate remote adapter.
+ * When endpoint is empty or omitted, falls back to DEFAULT_REMOTE_ENDPOINT (no auth).
+ * Selects OpenAIAdapter only when the endpoint hostname is exactly api.openai.com
+ * or a subdomain — never based on substring matching.
  */
 export function createRemoteAdapter(
-  endpoint: string,
-  apiKey: string
+  endpoint: string = DEFAULT_REMOTE_ENDPOINT,
+  apiKey = ''
 ): RemoteAdapter {
+  const url = endpoint.trim() || DEFAULT_REMOTE_ENDPOINT;
   try {
-    const { hostname } = new URL(endpoint);
-    // Use the OpenAI adapter only when the hostname is exactly api.openai.com
-    // (or a subdomain of openai.com) to avoid substring-matching attacks.
+    const { hostname } = new URL(url);
     if (hostname === 'api.openai.com' || hostname.endsWith('.openai.com')) {
       return new OpenAIAdapter(apiKey);
     }
   } catch {
-    // endpoint is not a valid URL — fall through to generic adapter
+    // Invalid URL — fall through to generic adapter
   }
-  return new GenericHttpAdapter(endpoint, apiKey);
+  return new GenericHttpAdapter(url, apiKey);
 }

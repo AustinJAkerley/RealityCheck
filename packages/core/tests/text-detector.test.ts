@@ -43,7 +43,7 @@ describe('computeLocalTextScore', () => {
 
 describe('TextDetector (local only)', () => {
   const detector = new TextDetector();
-  const opts = { localOnly: true };
+  const opts = { remoteEnabled: false, detectionQuality: 'medium' as const };
 
   test('returns a DetectionResult for AI-like text', async () => {
     const aiText =

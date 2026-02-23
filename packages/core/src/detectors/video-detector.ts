@@ -1,21 +1,22 @@
 /**
- * Video detector — lightweight sampling strategy.
+ * Video detector — URL heuristics + frame sampling + remote escalation.
  *
- * Approach (in descending priority):
- * 1. URL/src heuristics (known AI video platforms, generated-content CDNs).
- * 2. Periodic frame capture via canvas (one frame per 5 s) — only if
- *    the video element is visible and not cross-origin.
- * 3. Optional remote classifier of sampled frames.
+ * Flow:
+ * 1. Check URL against known AI video platform patterns.
+ * 2. Attempt canvas frame capture (same-origin only).
+ * 3. If remoteEnabled: send frame to remote classifier and blend with URL score.
+ *    If no frame was captured and the URL score is 0, only escalate to remote
+ *    when the result is inconclusive locally.
  *
  * Frame-level deep-fake detection requires a dedicated model (e.g. FaceForensics++
- * based classifiers). In local-only mode we fall back to URL heuristics and
- * a conservative score. See docs/architecture.md for references.
+ * based classifiers). In local-only mode we fall back to URL heuristics only.
  *
  * Known limitations:
  * - Canvas frame capture is blocked for cross-origin videos (CORS taint).
  * - Frame sampling cannot reliably detect all deepfakes.
  */
 import { DetectionResult, Detector, DetectorOptions } from '../types.js';
+import { DEFAULT_REMOTE_ENDPOINT } from '../types.js';
 import { DetectionCache } from '../utils/cache.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
 import { hashUrl, hashDataUrl } from '../utils/hash.js';
@@ -77,18 +78,22 @@ export class VideoDetector implements Detector {
     const cached = this.cache.get(cacheKey);
     if (cached) return cached;
 
-    let localScore = matchesAIVideoUrl(src) ? 0.7 : 0;
+    // Step 1: URL heuristics
+    const localScore = matchesAIVideoUrl(src) ? 0.7 : 0;
 
     let finalScore = localScore;
     let source: DetectionResult['source'] = 'local';
 
-    if (!options.localOnly && options.remoteEndpoint && video) {
+    // Step 2 & 3: Frame capture + remote classification.
+    // Escalate to remote whenever enabled; frame capture adds richer payload.
+    if (options.remoteEnabled && video) {
       if (this.rateLimiter.consume()) {
         try {
           const frameDataUrl = captureVideoFrame(video);
           if (frameDataUrl) {
             const imageHash = hashDataUrl(frameDataUrl);
-            const adapter = createRemoteAdapter(options.remoteEndpoint, options.remoteApiKey ?? '');
+            const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
+            const adapter = createRemoteAdapter(endpoint);
             const result = await adapter.classify('video', {
               imageHash,
               imageDataUrl: frameDataUrl,

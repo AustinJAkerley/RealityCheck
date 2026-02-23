@@ -155,3 +155,16 @@ footer {
   color: var(--muted);
   padding: 8px 0 0;
 }
+
+/* Advanced section */
+.advanced-section summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--muted);
+  user-select: none;
+  list-style: none;
+  padding: 2px 0;
+}
+.advanced-section summary::before { content: '▶ '; font-size: 9px; }
+.advanced-section[open] summary::before { content: '▼ '; font-size: 9px; }
+

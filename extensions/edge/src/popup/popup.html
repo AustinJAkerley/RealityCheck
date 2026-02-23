@@ -32,25 +32,31 @@
   </section>
 
   <section class="card">
-    <h2>Privacy</h2>
-    <div class="row">
-      <span>Local-only mode <small>(no network calls)</small></span>
+    <h2>Detection</h2>
+
+    <label>
+      Quality
+      <select id="detectionQuality">
+        <option value="low">Low — Fastest, basic checks</option>
+        <option value="medium" selected>Medium — Balanced (recommended)</option>
+        <option value="high">High — Most accurate, uses more resources</option>
+      </select>
+    </label>
+
+    <div class="row" style="margin-top:8px">
+      <span>Remote classification <small>(recommended)</small></span>
       <label class="toggle">
-        <input type="checkbox" id="localOnly" />
+        <input type="checkbox" id="remoteEnabled" />
         <span class="slider"></span>
       </label>
     </div>
-    <div id="remoteSection" class="remote-section hidden">
-      <label>
-        Remote endpoint
-        <input type="url" id="remoteEndpoint" placeholder="https://your-api.example.com/detect" />
-      </label>
-      <label>
-        API key <small>(stored in extension storage only)</small>
-        <input type="password" id="remoteApiKey" placeholder="sk-..." autocomplete="off" />
-      </label>
-      <p class="privacy-notice">⚠ When remote mode is active, selected content will be sent to the configured endpoint. Ensure you trust the provider.</p>
-    </div>
+    <p id="remoteOffNote" class="privacy-notice hidden">
+      ⚠ Remote classification is off. For best results, use Medium or High quality.
+    </p>
+    <p class="privacy-notice" id="remoteOnNote">
+      Content that passes local pre-screening is sent to our hosted classifier.
+      No API key required.
+    </p>
   </section>
 
   <section class="card">
@@ -101,6 +107,19 @@
     </div>
     <p id="reportStatus" class="report-status hidden">Thank you for your feedback!</p>
   </section>
+
+  <!-- Advanced section (collapsed by default — for development use) -->
+  <details class="card advanced-section">
+    <summary>Advanced settings</summary>
+    <label>
+      Remote endpoint override <small>(leave blank for default)</small>
+      <input type="url" id="remoteEndpoint" placeholder="https://api.realitycheck.ai/v1/classify" />
+    </label>
+    <label>
+      API key <small>(only needed for custom endpoints)</small>
+      <input type="password" id="remoteApiKey" placeholder="Optional" autocomplete="off" />
+    </label>
+  </details>
 
   <footer>
     <span>RealityCheck v1.0.0</span>

@@ -1,17 +1,21 @@
 /**
- * Text detector — local heuristic scoring + optional remote classification.
+ * Text detector — local heuristic scoring + remote escalation when inconclusive.
  *
- * Local heuristics (research-backed, see docs/architecture.md):
- * - Perplexity-proxy: unusually uniform sentence lengths
- * - Burstiness: low variance in sentence lengths (AI text tends to be "flat")
- * - Vocabulary richness: type-token ratio
- * - Filler phrase frequency: known AI patterns ("As an AI language model", etc.)
- * - Punctuation regularity
+ * Flow:
+ * 1. Run local heuristics (burstiness, TTR, filler phrases).
+ * 2. If local score is conclusive (< 0.15 clearly human, or > 0.65 clearly AI),
+ *    return local result without a remote call.
+ * 3. If local score is inconclusive (0.15–0.65) AND remoteEnabled,
+ *    escalate to the hosted remote classifier and blend the result.
+ *
+ * This keeps remote calls to a minimum while still getting the benefit of
+ * remote classification for ambiguous cases.
  *
  * These heuristics have known limitations (false positives/negatives).
  * See docs/architecture.md for accuracy discussion and mitigation strategies.
  */
 import { DetectionResult, Detector, DetectorOptions } from '../types.js';
+import { DEFAULT_REMOTE_ENDPOINT } from '../types.js';
 import { DetectionCache } from '../utils/cache.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
 import { hashText } from '../utils/hash.js';
@@ -103,6 +107,13 @@ function scoreToConfidence(score: number): DetectionResult['confidence'] {
   return 'low';
 }
 
+/**
+ * Local score range in which the result is considered inconclusive —
+ * escalate to remote when remoteEnabled.
+ */
+const INCONCLUSIVE_LOW = 0.15;
+const INCONCLUSIVE_HIGH = 0.65;
+
 export class TextDetector implements Detector {
   readonly contentType = 'text' as const;
   private readonly cache = new DetectionCache<DetectionResult>();
@@ -120,10 +131,13 @@ export class TextDetector implements Detector {
     let finalScore = localScore;
     let source: DetectionResult['source'] = 'local';
 
-    if (!options.localOnly && localScore > 0.2 && options.remoteEndpoint) {
+    // Escalate to remote only when the local score is inconclusive
+    const inconclusive = localScore >= INCONCLUSIVE_LOW && localScore <= INCONCLUSIVE_HIGH;
+    if (options.remoteEnabled && inconclusive) {
       if (this.rateLimiter.consume()) {
         try {
-          const adapter = createRemoteAdapter(options.remoteEndpoint, options.remoteApiKey ?? '');
+          const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
+          const adapter = createRemoteAdapter(endpoint);
           const result = await adapter.classify('text', { text: text.slice(0, 2000) });
           // Blend local + remote scores (weight remote more heavily)
           finalScore = localScore * 0.3 + result.score * 0.7;

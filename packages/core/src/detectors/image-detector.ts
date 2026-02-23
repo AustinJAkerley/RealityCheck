@@ -1,23 +1,276 @@
 /**
- * Image detector — local metadata/provenance checks + optional remote classifier.
+ * Image detector — photorealism pre-filter + local heuristics + optional remote classifier.
  *
- * Local heuristics:
- * - C2PA/Content-Credentials metadata check (via HTTP headers or embedded XMP — limited)
- * - Aspect-ratio and dimension checks (common AI image aspect ratios)
- * - EXIF absence (AI images often lack camera EXIF data)
- * - src URL heuristics (known AI image CDN patterns)
+ * Pipeline:
+ * 1. Photorealism pre-filter (tier-dependent canvas analysis).
+ *    - If the image is NOT photorealistic (icon, cartoon, text graphic), skip entirely.
+ *    - If it IS photorealistic (or uncertain), continue to step 2.
+ * 2. Local heuristics: CDN URL patterns, power-of-two dimensions, AI aspect ratios.
+ * 3. If remoteEnabled: send to the hosted classifier (DEFAULT_REMOTE_ENDPOINT).
+ *    Remote result is blended with local score (70% remote, 30% local).
  *
- * Note: without a real binary EXIF parser in the browser, EXIF checks are best-effort.
- * The remote classifier sends only a downscaled data URL (privacy: user must opt in).
+ * Pre-filter tiers:
+ *   low:    Color histogram entropy + unique color count (canvas 64×64, ~zero cost)
+ *   medium: Low + block noise/texture variance + saturation distribution
+ *   high:   Medium + bundled ML model (stub — see HIGH_TIER_ML_AVAILABLE below)
  *
  * Known limitations: local heuristics have low accuracy for novel AI models.
  * See docs/architecture.md for details.
  */
-import { DetectionResult, Detector, DetectorOptions } from '../types.js';
+import { DetectionResult, DetectionQuality, DetectorOptions, PhotorealismResult } from '../types.js';
+import { Detector } from '../types.js';
+import { DEFAULT_REMOTE_ENDPOINT } from '../types.js';
 import { DetectionCache } from '../utils/cache.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
 import { hashUrl, hashDataUrl } from '../utils/hash.js';
 import { createRemoteAdapter } from '../adapters/remote-adapter.js';
+
+// ── Pre-filter constants ─────────────────────────────────────────────────────
+
+/** Pre-filter canvas resolution. Small enough to be fast, large enough for analysis. */
+const PREFILTER_SIZE = 64;
+
+/**
+ * Threshold below which an image is considered NOT photorealistic.
+ * Kept deliberately low (0.20) to minimise false negatives —
+ * we prefer to analyse too many images rather than miss real AI photos.
+ */
+const PHOTOREALISM_SKIP_THRESHOLD = 0.20;
+
+/**
+ * Set to true when an ONNX / TF.js model is bundled with the extension.
+ * Until then, High tier falls back to Medium-tier canvas analysis.
+ */
+const HIGH_TIER_ML_AVAILABLE = false;
+
+// ── Pre-filter helper functions ──────────────────────────────────────────────
+
+/**
+ * Count unique quantized colors in RGBA pixel data.
+ * Quantizes each channel to 5 bits (32 levels) to reduce noise sensitivity.
+ */
+export function countUniqueColors(data: Uint8ClampedArray): number {
+  const seen = new Set<number>();
+  for (let i = 0; i < data.length; i += 4) {
+    const r = (data[i] >> 3) & 0x1f;
+    const g = (data[i + 1] >> 3) & 0x1f;
+    const b = (data[i + 2] >> 3) & 0x1f;
+    seen.add((r << 10) | (g << 5) | b);
+  }
+  return seen.size;
+}
+
+/**
+ * Compute Shannon entropy of a single color channel (8-bit → 32 bins).
+ * High entropy ≈ photorealistic; low entropy ≈ flat/cartoon.
+ * Returns a value in [0, log2(32)] ≈ [0, 5].
+ */
+export function computeChannelEntropy(data: Uint8ClampedArray, channelOffset: number): number {
+  const histogram = new Int32Array(32);
+  const pixelCount = data.length / 4;
+  for (let i = channelOffset; i < data.length; i += 4) {
+    histogram[data[i] >> 3]++;
+  }
+  let entropy = 0;
+  for (const count of histogram) {
+    if (count > 0) {
+      const p = count / pixelCount;
+      entropy -= p * Math.log2(p);
+    }
+  }
+  return entropy;
+}
+
+/**
+ * Compute luminance-based gradient complexity using a simple first-order
+ * finite difference (fast approximation of Sobel magnitude).
+ * Returns the mean gradient magnitude (0–255 scale).
+ * High variance / moderate mean ≈ photorealistic;
+ * very low mean (flat) or very high uniform mean (vector art) ≈ non-photo.
+ */
+export function computeEdgeComplexity(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number
+): number {
+  let total = 0;
+  const n = (width - 1) * (height - 1);
+  for (let y = 0; y < height - 1; y++) {
+    for (let x = 0; x < width - 1; x++) {
+      const i = (y * width + x) * 4;
+      const r = (y * width + x + 1) * 4;
+      const d = ((y + 1) * width + x) * 4;
+      const lum = (data[i] + data[i + 1] + data[i + 2]) / 3;
+      const lumR = (data[r] + data[r + 1] + data[r + 2]) / 3;
+      const lumD = (data[d] + data[d + 1] + data[d + 2]) / 3;
+      const gx = lumR - lum;
+      const gy = lumD - lum;
+      total += Math.sqrt(gx * gx + gy * gy);
+    }
+  }
+  return total / n;
+}
+
+/**
+ * Compute mean variance within small 4×4 pixel blocks (luminance).
+ * High block variance ≈ photographic texture/noise.
+ * Low block variance ≈ flat cartoon/illustration regions.
+ */
+export function computeBlockVariance(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number
+): number {
+  let totalVar = 0;
+  let blockCount = 0;
+  for (let by = 0; by < height; by += 4) {
+    for (let bx = 0; bx < width; bx += 4) {
+      const lums: number[] = [];
+      for (let dy = 0; dy < 4 && by + dy < height; dy++) {
+        for (let dx = 0; dx < 4 && bx + dx < width; dx++) {
+          const i = ((by + dy) * width + (bx + dx)) * 4;
+          lums.push((data[i] + data[i + 1] + data[i + 2]) / 3);
+        }
+      }
+      if (lums.length === 0) continue;
+      const m = lums.reduce((a, b) => a + b, 0) / lums.length;
+      const v = lums.reduce((a, b) => a + (b - m) ** 2, 0) / lums.length;
+      totalVar += v;
+      blockCount++;
+    }
+  }
+  return blockCount > 0 ? totalVar / blockCount : 0;
+}
+
+/**
+ * Compute the variance of HSV saturation values across all pixels.
+ * Cartoons/illustrations tend to have high mean saturation and low variance
+ * (bright flat regions). Photos have varied, lower saturation overall.
+ */
+export function computeSaturationVariance(data: Uint8ClampedArray): number {
+  const sats: number[] = [];
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i] / 255;
+    const g = data[i + 1] / 255;
+    const b = data[i + 2] / 255;
+    const max = Math.max(r, g, b);
+    const delta = max - Math.min(r, g, b);
+    sats.push(max === 0 ? 0 : delta / max);
+  }
+  const mean = sats.reduce((a, b) => a + b, 0) / sats.length;
+  return sats.reduce((a, b) => a + (b - mean) ** 2, 0) / sats.length;
+}
+
+// ── Pre-filter scoring ───────────────────────────────────────────────────────
+
+/**
+ * Score the image data for photorealism using Low-tier heuristics.
+ * Returns a value in [0, 1]; higher = more photorealistic.
+ */
+export function scoreLowTier(data: Uint8ClampedArray): number {
+  const uniqueColors = countUniqueColors(data);
+  const rEntropy = computeChannelEntropy(data, 0);
+  const gEntropy = computeChannelEntropy(data, 1);
+  const bEntropy = computeChannelEntropy(data, 2);
+  const entropy = (rEntropy + gEntropy + bEntropy) / 3;
+  const edgeComplexity = computeEdgeComplexity(data, PREFILTER_SIZE, PREFILTER_SIZE);
+
+  // Unique colors: < 50 → 0, > 400 → 1
+  const colorScore = Math.min(1, Math.max(0, (uniqueColors - 50) / 350));
+  // Entropy: < 2 bits → 0, > 4.5 bits → 1
+  const entropyScore = Math.min(1, Math.max(0, (entropy - 2) / 2.5));
+  // Edge complexity: < 3 → 0, > 20 → 1
+  const edgeScore = Math.min(1, Math.max(0, (edgeComplexity - 3) / 17));
+
+  return colorScore * 0.4 + entropyScore * 0.4 + edgeScore * 0.2;
+}
+
+/**
+ * Score the image data for photorealism using Medium-tier heuristics.
+ * Extends Low tier with block variance and saturation distribution.
+ */
+export function scoreMediumTier(data: Uint8ClampedArray): number {
+  const baseScore = scoreLowTier(data);
+  const blockVar = computeBlockVariance(data, PREFILTER_SIZE, PREFILTER_SIZE);
+  const satVar = computeSaturationVariance(data);
+
+  // Block variance: < 20 → 0, > 200 → 1 (photos have texture noise)
+  const noiseScore = Math.min(1, Math.max(0, (blockVar - 20) / 180));
+  // Saturation variance: < 0.03 → 0 (flat cartoon), > 0.06 → 1 (photo variety)
+  const satScore = Math.min(1, Math.max(0, (satVar - 0.03) / 0.03));
+
+  // Blend: give medium-tier signals a 30% weight on top of the 70% base
+  return baseScore * 0.7 + noiseScore * 0.15 + satScore * 0.15;
+}
+
+/**
+ * Score using High-tier analysis.
+ * Currently falls back to Medium-tier canvas analysis because no ML model is bundled.
+ * When a bundled ML model becomes available (HIGH_TIER_ML_AVAILABLE = true):
+ * 1. Bundle a TensorFlow.js / ONNX Runtime Web compatible model with the extension.
+ * 2. Load it at startup and expose a `runMLModel(data: ImageData): Promise<number>` function.
+ * 3. Set HIGH_TIER_ML_AVAILABLE = true and implement the async call below.
+ */
+async function scoreHighTier(data: Uint8ClampedArray): Promise<number> {
+  if (HIGH_TIER_ML_AVAILABLE) {
+    // TODO: call the bundled ML model here.
+    // const mlScore = await runMLModel(data);
+    // return scoreMediumTier(data) * 0.3 + mlScore * 0.7;
+  }
+  // Fall back to Medium tier until a model is bundled
+  return scoreMediumTier(data);
+}
+
+// ── Public pre-filter API ────────────────────────────────────────────────────
+
+/**
+ * Draw an HTMLImageElement into a small canvas and return the pixel data.
+ * Returns null if the image is cross-origin or the canvas context is unavailable.
+ */
+function extractPixelData(img: HTMLImageElement): Uint8ClampedArray | null {
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = PREFILTER_SIZE;
+    canvas.height = PREFILTER_SIZE;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0, PREFILTER_SIZE, PREFILTER_SIZE);
+    return ctx.getImageData(0, 0, PREFILTER_SIZE, PREFILTER_SIZE).data;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Run the photorealism pre-filter on raw RGBA pixel data (for testing, provide mock data).
+ * When `data` is null (canvas unavailable / cross-origin), the image is treated as
+ * potentially photorealistic (we don't skip it — conservative default).
+ */
+export async function runPhotorealismPreFilter(
+  data: Uint8ClampedArray | null,
+  quality: DetectionQuality = 'medium'
+): Promise<PhotorealismResult> {
+  if (data === null) {
+    // Cannot analyse — treat as photorealistic to avoid missing real detections
+    return { isPhotorealistic: true, score: 0.5 };
+  }
+
+  let score: number;
+  if (quality === 'high') {
+    score = await scoreHighTier(data);
+  } else if (quality === 'medium') {
+    score = scoreMediumTier(data);
+  } else {
+    score = scoreLowTier(data);
+  }
+
+  return {
+    isPhotorealistic: score >= PHOTOREALISM_SKIP_THRESHOLD,
+    score,
+  };
+}
+
+// ── AI-generation local heuristics ──────────────────────────────────────────
 
 /** Known AI image hosting patterns */
 const AI_CDN_PATTERNS: RegExp[] = [
@@ -37,9 +290,8 @@ function matchesAICDN(src: string): boolean {
   return AI_CDN_PATTERNS.some((r) => r.test(src));
 }
 
-/** Common AI-generated image dimensions/ratios */
 const AI_ASPECT_RATIOS: Array<[number, number]> = [
-  [1, 1], // 512×512, 1024×1024 (square)
+  [1, 1],
   [4, 3],
   [3, 4],
   [16, 9],
@@ -54,7 +306,6 @@ function isLikelyAIAspectRatio(w: number, h: number): boolean {
   return AI_ASPECT_RATIOS.some(([rw, rh]) => Math.abs(ratio - rw / rh) < 0.02);
 }
 
-/** Power-of-two dimensions are very common for AI-generated images */
 function isPowerOfTwo(n: number): boolean {
   return n > 0 && (n & (n - 1)) === 0;
 }
@@ -64,9 +315,7 @@ function isLikelyAIDimension(w: number, h: number): boolean {
 }
 
 /**
- * Returns 0–1 local score.
- * @param src - The image src URL
- * @param naturalWidth / naturalHeight - from the HTMLImageElement
+ * Returns 0–1 local AI-generation score based on URL patterns and dimensions.
  */
 export function computeLocalImageScore(
   src: string,
@@ -80,7 +329,6 @@ export function computeLocalImageScore(
   if (isLikelyAIDimension(naturalWidth, naturalHeight)) score += 0.2;
   else if (isLikelyAIAspectRatio(naturalWidth, naturalHeight)) score += 0.1;
 
-  // Very large or very small images with round dimensions are suspicious
   if (naturalWidth > 0 && naturalWidth % 64 === 0 && naturalHeight % 64 === 0) {
     score += 0.1;
   }
@@ -95,8 +343,7 @@ function scoreToConfidence(score: number): DetectionResult['confidence'] {
 }
 
 /**
- * Downscale an HTMLImageElement to a small canvas and return a data URL.
- * Used to send a thumbnail to a remote classifier (privacy: opt-in only).
+ * Downscale an HTMLImageElement for remote transmission.
  */
 function downscaleImage(img: HTMLImageElement, maxDim = 128): string | null {
   try {
@@ -113,6 +360,8 @@ function downscaleImage(img: HTMLImageElement, maxDim = 128): string | null {
   }
 }
 
+// ── Detector class ───────────────────────────────────────────────────────────
+
 export class ImageDetector implements Detector {
   readonly contentType = 'image' as const;
   private readonly cache = new DetectionCache<DetectionResult>();
@@ -126,6 +375,28 @@ export class ImageDetector implements Detector {
     const cached = this.cache.get(cacheKey);
     if (cached) return cached;
 
+    // ── Step 1: Photorealism pre-filter ───────────────────────────────────────
+    // Only runs on actual HTMLImageElement instances; string URLs skip the canvas step.
+    const pixelData = img ? extractPixelData(img) : null;
+    const quality = options.detectionQuality ?? 'medium';
+    const preFilter = await runPhotorealismPreFilter(pixelData, quality);
+
+    if (!preFilter.isPhotorealistic) {
+      // Not photorealistic — skip AI detection entirely
+      const skipped: DetectionResult = {
+        contentType: 'image',
+        isAIGenerated: false,
+        confidence: 'low',
+        score: 0,
+        source: 'local',
+        skippedByPreFilter: true,
+        details: `Pre-filter score ${preFilter.score.toFixed(2)} below threshold — not photorealistic`,
+      };
+      this.cache.set(cacheKey, skipped);
+      return skipped;
+    }
+
+    // ── Step 2: Local AI-generation heuristics ────────────────────────────────
     const nw = img?.naturalWidth ?? 0;
     const nh = img?.naturalHeight ?? 0;
     const localScore = computeLocalImageScore(src, nw, nh);
@@ -133,12 +404,15 @@ export class ImageDetector implements Detector {
     let finalScore = localScore;
     let source: DetectionResult['source'] = 'local';
 
-    if (!options.localOnly && options.remoteEndpoint && img) {
+    // ── Step 3: Remote classification ─────────────────────────────────────────
+    // Always send to remote when enabled and the image passed the pre-filter.
+    if (options.remoteEnabled && img) {
       if (this.rateLimiter.consume()) {
         try {
           const dataUrl = downscaleImage(img);
           const imageHash = hashDataUrl(dataUrl ?? src);
-          const adapter = createRemoteAdapter(options.remoteEndpoint, options.remoteApiKey ?? '');
+          const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
+          const adapter = createRemoteAdapter(endpoint);
           const result = await adapter.classify('image', {
             imageHash,
             imageDataUrl: dataUrl ?? undefined,

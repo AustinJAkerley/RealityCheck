@@ -10,6 +10,25 @@ export type WatermarkMode = 'static' | 'flash' | 'pulse' | 'auto-hide';
 
 export type WatermarkPosition = 'center' | 'top-left' | 'top-right' | 'bottom';
 
+/**
+ * Three-tier local classification quality setting.
+ * - low:    Canvas heuristics only (color histogram, unique color count, edge analysis).
+ *           Near-zero performance impact.
+ * - medium: Low tier + gradient smoothness, block noise/texture, saturation distribution.
+ *           Balanced cost/accuracy (default).
+ * - high:   Medium tier + bundled ML model (TensorFlow.js / ONNX Runtime Web).
+ *           Most accurate; requires modern hardware.
+ */
+export type DetectionQuality = 'low' | 'medium' | 'high';
+
+/**
+ * Default hosted endpoint — our Azure-hosted AI classifier proxy.
+ * Users do not need to provide an API key; the proxy authenticates the extension
+ * via standard extension certificate verification.
+ * Can be overridden in the Advanced settings for development purposes.
+ */
+export const DEFAULT_REMOTE_ENDPOINT = 'https://api.realitycheck.ai/v1/classify';
+
 export interface DetectionResult {
   contentType: ContentType;
   isAIGenerated: boolean;
@@ -17,16 +36,31 @@ export interface DetectionResult {
   /** 0–1 probability score */
   score: number;
   source: 'local' | 'remote';
+  /** Set to true when the photorealism pre-filter determined the image is not photorealistic */
+  skippedByPreFilter?: boolean;
   details?: string;
 }
 
+/**
+ * Result of the photorealism pre-filter.
+ * Indicates whether the image is likely photorealistic and worth further analysis.
+ */
+export interface PhotorealismResult {
+  isPhotorealistic: boolean;
+  /** 0–1 score; higher = more photorealistic */
+  score: number;
+}
+
 export interface DetectorOptions {
-  /** If true, never make network calls */
-  localOnly: boolean;
-  /** Remote API endpoint (if not localOnly) */
+  /** Whether to call the remote classifier. Defaults to true. */
+  remoteEnabled: boolean;
+  /** Detection quality tier — controls pre-filter depth. Default: 'medium'. */
+  detectionQuality: DetectionQuality;
+  /**
+   * Remote endpoint override. When omitted, DEFAULT_REMOTE_ENDPOINT is used.
+   * Only needed for advanced/development use.
+   */
   remoteEndpoint?: string;
-  /** API key for the remote provider */
-  remoteApiKey?: string;
 }
 
 export interface WatermarkConfig {
@@ -48,8 +82,17 @@ export interface SiteSettings {
 
 export interface ExtensionSettings {
   globalEnabled: boolean;
-  localOnly: boolean;
+  /** Whether to call the remote classifier. Defaults to true. */
+  remoteEnabled: boolean;
+  /** Local classification quality tier. Default: 'medium'. */
+  detectionQuality: DetectionQuality;
+  /**
+   * Remote endpoint override (advanced/dev only). Empty string = use DEFAULT_REMOTE_ENDPOINT.
+   */
   remoteEndpoint: string;
+  /**
+   * API key for custom remote endpoints (advanced/dev only). Not needed for the default endpoint.
+   */
   remoteApiKey: string;
   watermark: WatermarkConfig;
   siteSettings: Record<string, SiteSettings>;
@@ -66,7 +109,8 @@ export const DEFAULT_WATERMARK_CONFIG: WatermarkConfig = {
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
   globalEnabled: true,
-  localOnly: true,
+  remoteEnabled: true,
+  detectionQuality: 'medium',
   remoteEndpoint: '',
   remoteApiKey: '',
   watermark: DEFAULT_WATERMARK_CONFIG,

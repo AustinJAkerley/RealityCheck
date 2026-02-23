@@ -9,10 +9,10 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 const globalEnabledEl = $<HTMLInputElement>('globalEnabled');
 const siteHostEl = $<HTMLElement>('siteHost');
 const siteEnabledEl = $<HTMLInputElement>('siteEnabled');
-const localOnlyEl = $<HTMLInputElement>('localOnly');
-const remoteSectionEl = $<HTMLElement>('remoteSection');
-const remoteEndpointEl = $<HTMLInputElement>('remoteEndpoint');
-const remoteApiKeyEl = $<HTMLInputElement>('remoteApiKey');
+const detectionQualityEl = $<HTMLSelectElement>('detectionQuality');
+const remoteEnabledEl = $<HTMLInputElement>('remoteEnabled');
+const remoteOffNoteEl = $<HTMLElement>('remoteOffNote');
+const remoteOnNoteEl = $<HTMLElement>('remoteOnNote');
 const watermarkModeEl = $<HTMLSelectElement>('watermarkMode');
 const watermarkPositionEl = $<HTMLSelectElement>('watermarkPosition');
 const watermarkOpacityEl = $<HTMLInputElement>('watermarkOpacity');
@@ -24,6 +24,8 @@ const pulseFreqValueEl = $<HTMLElement>('pulseFreqValue');
 const reportFPEl = $<HTMLButtonElement>('reportFP');
 const reportFNEl = $<HTMLButtonElement>('reportFN');
 const reportStatusEl = $<HTMLElement>('reportStatus');
+const remoteEndpointEl = $<HTMLInputElement>('remoteEndpoint');
+const remoteApiKeyEl = $<HTMLInputElement>('remoteApiKey');
 
 let settings: ExtensionSettings = DEFAULT_SETTINGS;
 let currentHost = '';
@@ -40,10 +42,9 @@ function reflectSettings(): void {
   globalEnabledEl.checked = settings.globalEnabled;
   const siteSetting = settings.siteSettings[currentHost];
   siteEnabledEl.checked = siteSetting !== undefined ? siteSetting.enabled : true;
-  localOnlyEl.checked = settings.localOnly;
-  remoteSectionEl.classList.toggle('hidden', settings.localOnly);
-  remoteEndpointEl.value = settings.remoteEndpoint ?? '';
-  remoteApiKeyEl.value = settings.remoteApiKey ?? '';
+  detectionQualityEl.value = settings.detectionQuality;
+  remoteEnabledEl.checked = settings.remoteEnabled;
+  updateRemoteNotes(settings.remoteEnabled);
   const wm = settings.watermark;
   watermarkModeEl.value = wm.mode;
   watermarkPositionEl.value = wm.position;
@@ -53,6 +54,13 @@ function reflectSettings(): void {
   animDurValueEl.textContent = String(wm.animationDuration);
   pulseFreqEl.value = String(wm.pulseFrequency);
   pulseFreqValueEl.textContent = String(wm.pulseFrequency);
+  remoteEndpointEl.value = settings.remoteEndpoint ?? '';
+  remoteApiKeyEl.value = settings.remoteApiKey ?? '';
+}
+
+function updateRemoteNotes(remoteEnabled: boolean): void {
+  remoteOffNoteEl.classList.toggle('hidden', remoteEnabled);
+  remoteOnNoteEl.classList.toggle('hidden', !remoteEnabled);
 }
 
 async function save(): Promise<void> {
@@ -72,19 +80,14 @@ siteEnabledEl.addEventListener('change', async () => {
   await save();
 });
 
-localOnlyEl.addEventListener('change', async () => {
-  settings = { ...settings, localOnly: localOnlyEl.checked };
-  remoteSectionEl.classList.toggle('hidden', settings.localOnly);
+detectionQualityEl.addEventListener('change', async () => {
+  settings = { ...settings, detectionQuality: detectionQualityEl.value as ExtensionSettings['detectionQuality'] };
   await save();
 });
 
-remoteEndpointEl.addEventListener('change', async () => {
-  settings = { ...settings, remoteEndpoint: remoteEndpointEl.value.trim() };
-  await save();
-});
-
-remoteApiKeyEl.addEventListener('change', async () => {
-  settings = { ...settings, remoteApiKey: remoteApiKeyEl.value.trim() };
+remoteEnabledEl.addEventListener('change', async () => {
+  settings = { ...settings, remoteEnabled: remoteEnabledEl.checked };
+  updateRemoteNotes(settings.remoteEnabled);
   await save();
 });
 
@@ -116,6 +119,15 @@ pulseFreqEl.addEventListener('change', async () => {
   await save();
 });
 
+remoteEndpointEl.addEventListener('change', async () => {
+  settings = { ...settings, remoteEndpoint: remoteEndpointEl.value.trim() };
+  await save();
+});
+remoteApiKeyEl.addEventListener('change', async () => {
+  settings = { ...settings, remoteApiKey: remoteApiKeyEl.value.trim() };
+  await save();
+});
+
 function showReportStatus(): void {
   reportStatusEl.classList.remove('hidden');
   setTimeout(() => reportStatusEl.classList.add('hidden'), 3000);
@@ -132,3 +144,4 @@ reportFNEl.addEventListener('click', () => {
 });
 
 loadSettings().catch(console.error);
+

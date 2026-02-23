@@ -5,7 +5,7 @@ import { DetectionPipeline } from '../src/pipeline/detection-pipeline';
 
 describe('DetectionPipeline', () => {
   const pipeline = new DetectionPipeline();
-  const opts = { localOnly: true };
+  const opts = { remoteEnabled: false, detectionQuality: 'medium' as const };
 
   test('analyzeText returns a result with correct content type', async () => {
     const result = await pipeline.analyzeText('Short text.', opts);

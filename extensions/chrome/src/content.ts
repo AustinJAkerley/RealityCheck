@@ -15,7 +15,6 @@ import {
   DetectionPipeline,
   ExtensionSettings,
   DetectorOptions,
-  WatermarkConfig,
   applyMediaWatermark,
   applyTextWatermark,
   WatermarkHandle,
@@ -32,9 +31,9 @@ let currentSettings: ExtensionSettings | null = null;
 
 function getDetectorOptions(settings: ExtensionSettings): DetectorOptions {
   return {
-    localOnly: settings.localOnly,
-    remoteEndpoint: settings.remoteEndpoint,
-    remoteApiKey: settings.remoteApiKey,
+    remoteEnabled: settings.remoteEnabled,
+    detectionQuality: settings.detectionQuality,
+    remoteEndpoint: settings.remoteEndpoint || undefined,
   };
 }
 
