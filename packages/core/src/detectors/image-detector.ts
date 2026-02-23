@@ -161,6 +161,98 @@ export function computeSaturationVariance(data: Uint8ClampedArray): number {
   return sats.reduce((a, b) => a + (b - mean) ** 2, 0) / sats.length;
 }
 
+// ── Visual AI-generation scoring ─────────────────────────────────────────────
+
+/**
+ * Estimate AI-generation probability from pixel data using visual heuristics
+ * that are characteristic of diffusion-model outputs:
+ *
+ *  1. **Uniform-saturation score** — AI images have high mean saturation
+ *     with LOW variance (consistent colour richness). Vivid real photos have
+ *     high mean saturation but HIGH variance (vivid areas alongside shadows).
+ *
+ *  2. **Channel-variance uniformity** — AI generators produce no lens
+ *     chromatic aberration, so R/G/B channels have similar variance.
+ *     Real photos show channel-specific variance differences.
+ *
+ *  3. **Luminance balance** — AI images are typically well-exposed
+ *     (mean luminance near 0.50). Very dark or very bright images are
+ *     more likely to be real photographs taken in challenging conditions.
+ *
+ * Returns 0–1; higher = more likely AI-generated.
+ * Expected accuracy: ~50–60% on typical AI image sets (local heuristics only).
+ */
+export function computeVisualAIScore(
+  data: Uint8ClampedArray,
+  _width: number,
+  _height: number
+): number {
+  const pixelCount = data.length / 4;
+  if (pixelCount === 0) return 0;
+
+  let satSum = 0;
+  let satSqSum = 0;
+  let lumSum = 0;
+  let rSum = 0, gSum = 0, bSum = 0;
+  let rSqSum = 0, gSqSum = 0, bSqSum = 0;
+
+  for (let i = 0; i < data.length; i += 4) {
+    const r8 = data[i], g8 = data[i + 1], b8 = data[i + 2];
+    const r = r8 / 255, g = g8 / 255, b = b8 / 255;
+
+    const max = Math.max(r, g, b);
+    const sat = max === 0 ? 0 : (max - Math.min(r, g, b)) / max;
+    satSum += sat;
+    satSqSum += sat * sat;
+
+    lumSum += r * 0.299 + g * 0.587 + b * 0.114;
+
+    rSum += r8; gSum += g8; bSum += b8;
+    rSqSum += r8 * r8; gSqSum += g8 * g8; bSqSum += b8 * b8;
+  }
+
+  const meanSat = satSum / pixelCount;
+  // Population variance of saturation
+  const satVar = Math.max(0, satSqSum / pixelCount - meanSat * meanSat);
+  const meanLum = lumSum / pixelCount;
+
+  // Channel variance uniformity
+  const rMean = rSum / pixelCount;
+  const gMean = gSum / pixelCount;
+  const bMean = bSum / pixelCount;
+  const rVar = Math.max(0, rSqSum / pixelCount - rMean * rMean);
+  const gVar = Math.max(0, gSqSum / pixelCount - gMean * gMean);
+  const bVar = Math.max(0, bSqSum / pixelCount - bMean * bMean);
+  const varMean = (rVar + gVar + bVar) / 3;
+  const channelUniformityScore =
+    varMean > 0
+      ? Math.max(
+          0,
+          Math.min(
+            1,
+            1 -
+              (Math.abs(rVar - varMean) + Math.abs(gVar - varMean) + Math.abs(bVar - varMean)) /
+                (3 * varMean)
+          )
+        )
+      : 1;
+
+  // Uniform-saturation score:
+  //   raw = meanSat - satVar * 3   (penalises high-variance vivid photos)
+  //   AI portrait/animal: meanSat≈0.40, satVar≈0.02 → raw≈0.34 → score≈0.76
+  //   Real photo: meanSat≈0.27, satVar≈0.04 → raw≈0.15 → score≈0
+  //   Vivid sunset: meanSat≈0.55, satVar≈0.08 → raw≈0.31 → score≈0.64
+  const rawUniformSat = Math.max(0, meanSat - satVar * 3.0);
+  // Calibrated: 0.15 → 0, 0.40 → 1
+  const uniformSatScore = Math.max(0, Math.min(1, (rawUniformSat - 0.15) / 0.25));
+
+  // Luminance balance: AI images tend to be well-exposed (mean lum ≈ 0.50)
+  // Peaks at 0.50, falls off for dark (<0.30) or bright (>0.70) images
+  const lumScore = Math.max(0, 1 - Math.abs(meanLum - 0.50) * 3.2);
+
+  return uniformSatScore * 0.50 + channelUniformityScore * 0.30 + lumScore * 0.20;
+}
+
 // ── Pre-filter scoring ───────────────────────────────────────────────────────
 
 /**
@@ -401,7 +493,25 @@ export class ImageDetector implements Detector {
     const nh = img?.naturalHeight ?? 0;
     const localScore = computeLocalImageScore(src, nw, nh);
 
-    let finalScore = localScore;
+    // ── Step 2b: Visual AI scoring (medium / high tiers) ─────────────────────
+    // Uses per-pixel statistics from the pre-filter canvas sample to detect
+    // diffusion-model characteristics (uniform saturation, balanced channels,
+    // well-exposed luminance). Improves detection of AI images that don't
+    // match known CDN patterns or dimension heuristics.
+    let combinedLocalScore = localScore;
+    if (pixelData && quality !== 'low') {
+      const visualScore = computeVisualAIScore(pixelData, PREFILTER_SIZE, PREFILTER_SIZE);
+      // When CDN/dimension evidence is weak, let visual score drive the result
+      // (discounted slightly to stay conservative on false positives).
+      // When CDN evidence is strong, visual score provides an additional floor.
+      const discount = quality === 'high' ? 0.75 : 0.62;
+      combinedLocalScore =
+        localScore >= 0.3
+          ? Math.max(localScore, visualScore * discount * 0.6)
+          : Math.max(localScore, visualScore * discount);
+    }
+
+    let finalScore = combinedLocalScore;
     let source: DetectionResult['source'] = 'local';
 
     // ── Step 3: Remote classification ─────────────────────────────────────────
@@ -417,7 +527,7 @@ export class ImageDetector implements Detector {
             imageHash,
             imageDataUrl: dataUrl ?? undefined,
           });
-          finalScore = localScore * 0.3 + result.score * 0.7;
+          finalScore = combinedLocalScore * 0.3 + result.score * 0.7;
           source = 'remote';
         } catch {
           // Remote call failed — fall back to local score

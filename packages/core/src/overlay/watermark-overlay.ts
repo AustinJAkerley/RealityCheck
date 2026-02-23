@@ -36,26 +36,25 @@ const CSS_TEMPLATE = `
   z-index: 2147483646;
   pointer-events: none;
   user-select: none;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
   font-family: system-ui, -apple-system, sans-serif;
-  font-weight: 700;
-  font-size: clamp(10px, 1.8vw, 22px);
-  text-align: center;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: #fff;
-  text-shadow: 0 1px 4px rgba(0,0,0,0.8);
-  background: rgba(220,30,30,0.55);
-  border: 2px solid rgba(255,60,60,0.8);
-  border-radius: 6px;
-  padding: 6px 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: none;
+  /* Semi-transparent red with white halo — legible on any background */
+  color: rgba(210, 30, 30, 0.72);
+  text-shadow:
+    0 0 8px rgba(255, 255, 255, 0.95),
+    0 0 16px rgba(255, 255, 255, 0.55),
+    1px 1px 3px rgba(0, 0, 0, 0.45);
+  background: none;
+  border: none;
+  padding: 0;
   opacity: var(--rc-opacity);
-  box-sizing: border-box;
-  /* Never block interaction with the underlying element */
-  pointer-events: none;
+  white-space: nowrap;
+  /* Diagonal: centred on the element by default (overridden per position) */
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-40deg);
 }
 .rc-watermark.rc-mode-flash {
   animation: rc-flash var(--rc-anim-duration) ease forwards;
@@ -70,12 +69,12 @@ const CSS_TEMPLATE = `
   opacity: 0 !important;
 }
 .rc-watermark .rc-badge {
-  font-size: 0.7em;
-  margin-top: 3px;
+  display: block;
+  font-size: 0.5em;
+  margin-top: 2px;
   font-weight: 400;
-  text-transform: none;
-  letter-spacing: 0;
-  opacity: 0.9;
+  letter-spacing: 0.04em;
+  opacity: 0.80;
 }
 /* Text highlight for inline AI-labelled spans */
 .rc-text-highlight {
@@ -123,48 +122,61 @@ function confidenceLabel(confidence: ConfidenceLevel): string {
   return map[confidence];
 }
 
+/**
+ * Adjust the anchor point of the diagonal watermark based on the position setting.
+ * CSS handles the rotation; this sets top/left percentage on the wrapper.
+ */
 function positionWatermark(
   el: HTMLElement,
-  wrapper: HTMLElement,
   position: WatermarkConfig['position']
 ): void {
-  el.style.maxWidth = '90%';
   switch (position) {
     case 'top-left':
-      el.style.top = '8px';
-      el.style.left = '8px';
-      el.style.bottom = '';
-      el.style.right = '';
-      el.style.transform = '';
+      el.style.top = '28%';
+      el.style.left = '32%';
       break;
     case 'top-right':
-      el.style.top = '8px';
-      el.style.right = '8px';
-      el.style.bottom = '';
-      el.style.left = '';
-      el.style.transform = '';
+      el.style.top = '28%';
+      el.style.left = '68%';
       break;
     case 'bottom':
-      el.style.bottom = '8px';
+      el.style.top = '72%';
       el.style.left = '50%';
-      el.style.top = '';
-      el.style.right = '';
-      el.style.transform = 'translateX(-50%)';
       break;
-    default: // center
+    default: // center — CSS default (top:50%, left:50%)
       el.style.top = '50%';
       el.style.left = '50%';
-      el.style.bottom = '';
-      el.style.right = '';
-      el.style.transform = 'translate(-50%, -50%)';
   }
-  // Suppress unused wrapper warning
-  void wrapper;
+}
+
+/**
+ * Set font size as a fraction of the shorter element dimension so the
+ * diagonal text scales with the image and never consumes the whole visual.
+ * Falls back to intrinsic dimensions when the element is off-screen.
+ */
+function setDiagonalFontSize(
+  overlay: HTMLElement,
+  media: HTMLImageElement | HTMLVideoElement,
+  wrapper: HTMLElement
+): void {
+  const w =
+    wrapper.offsetWidth ||
+    (media instanceof HTMLImageElement ? media.naturalWidth : media.videoWidth) ||
+    0;
+  const h =
+    wrapper.offsetHeight ||
+    (media instanceof HTMLImageElement ? media.naturalHeight : media.videoHeight) ||
+    0;
+  const minDim = Math.min(w, h);
+  // ≈ 9% of the shorter dimension; clamped to a readable 12–56 px range
+  const px = minDim > 0 ? Math.max(12, Math.min(56, Math.round(minDim * 0.09))) : 18;
+  overlay.style.fontSize = `${px}px`;
 }
 
 /**
  * Determine whether the watermark would significantly obstruct the element.
- * If so, prefer flash or auto-hide.
+ * The diagonal text-only mark is far less obstructive than a box, so the
+ * threshold is only triggered for very tiny images.
  */
 function shouldAutoFallback(
   element: HTMLElement,
@@ -173,9 +185,10 @@ function shouldAutoFallback(
   const rect = element.getBoundingClientRect();
   const area = rect.width * rect.height;
   if (area === 0) return false;
-  // Watermark is roughly 200×60 px at most — check fraction
-  const watermarkArea = Math.min(rect.width * 0.9, 220) * 60;
-  return watermarkArea / area > config.obstructionThreshold;
+  // Text-only diagonal watermark occupies roughly 15% of total area — only
+  // fall back to flash/auto-hide when the image is smaller than the threshold.
+  const estimatedTextArea = rect.width * 0.6 * 20; // width × approx text height
+  return estimatedTextArea / area > config.obstructionThreshold;
 }
 
 function effectiveMode(element: HTMLElement, config: WatermarkConfig): WatermarkConfig['mode'] {
@@ -215,7 +228,9 @@ export interface WatermarkHandle {
 }
 
 /**
- * Apply a watermark overlay to an image or video element.
+ * Apply a diagonal watermark overlay to an image or video element.
+ * Styled like a stock-photo watermark: semi-transparent red diagonal text,
+ * sized proportionally to the element so it never covers the whole image.
  */
 export function applyMediaWatermark(
   media: HTMLImageElement | HTMLVideoElement,
@@ -230,18 +245,22 @@ export function applyMediaWatermark(
   const overlay = document.createElement('div');
   overlay.className = `rc-watermark rc-mode-${mode}`;
   overlay.setAttribute('aria-label', 'Likely AI-generated content');
+  overlay.setAttribute('role', 'img');
   overlay.style.setProperty('--rc-opacity', String(config.opacity / 100));
   overlay.style.setProperty('--rc-anim-duration', `${config.animationDuration}ms`);
   overlay.style.setProperty('--rc-pulse-freq', `${config.pulseFrequency}ms`);
 
-  overlay.textContent = '⚠ Likely AI Generated';
+  // Font size proportional to image dimensions (never covers the whole image)
+  setDiagonalFontSize(overlay, media, wrapper);
+
+  overlay.textContent = 'Likely AI-Generated';
 
   const badge = document.createElement('div');
   badge.className = 'rc-badge';
   badge.textContent = confidenceLabel(confidence);
   overlay.appendChild(badge);
 
-  positionWatermark(overlay, wrapper, config.position);
+  positionWatermark(overlay, config.position);
   wrapper.appendChild(overlay);
 
   if (mode === 'auto-hide') {
@@ -271,9 +290,10 @@ export function applyMediaWatermark(
 }
 
 /**
- * Apply a green dev-mode banner to an image or video element.
- * Indicates that the watermarking pipeline is working — used during local testing.
- * Shows "DEV: Watermarking Active" instead of an AI verdict.
+ * Apply a green diagonal dev-mode watermark to an image or video element.
+ * Shows "Not AI Generated" to confirm the watermarking pipeline is active
+ * during local testing. Visually identical in style to the production mark
+ * but green rather than red.
  */
 export function applyDevModeWatermark(
   media: HTMLImageElement | HTMLVideoElement,
@@ -285,20 +305,25 @@ export function applyDevModeWatermark(
 
   const overlay = document.createElement('div');
   overlay.className = 'rc-watermark rc-dev-mode';
-  overlay.setAttribute('aria-label', 'Dev mode: watermarking active');
+  overlay.setAttribute('aria-label', 'Dev mode: pipeline active');
+  overlay.setAttribute('role', 'img');
   overlay.style.setProperty('--rc-opacity', String(config.opacity / 100));
-  // Green badge — clearly distinguishable from the production red
-  overlay.style.background = 'rgba(20,160,60,0.75)';
-  overlay.style.border = '2px solid rgba(50,220,90,0.9)';
+  // Green — clearly distinguishable from the production red
+  overlay.style.color = 'rgba(20, 160, 60, 0.80)';
+  overlay.style.textShadow =
+    '0 0 8px rgba(255,255,255,0.95), 0 0 14px rgba(255,255,255,0.5), 1px 1px 3px rgba(0,0,0,0.4)';
 
-  overlay.textContent = '🛠 DEV: Watermarking Active';
+  // Font size proportional to image dimensions
+  setDiagonalFontSize(overlay, media, wrapper);
+
+  overlay.textContent = 'Not AI Generated';
 
   const badge = document.createElement('div');
   badge.className = 'rc-badge';
-  badge.textContent = 'Disable Dev Mode when done testing';
+  badge.textContent = 'Dev Mode — disable before shipping';
   overlay.appendChild(badge);
 
-  positionWatermark(overlay, wrapper, config.position);
+  positionWatermark(overlay, config.position);
   wrapper.appendChild(overlay);
 
   return {

@@ -3,6 +3,7 @@
  */
 import {
   computeLocalImageScore,
+  computeVisualAIScore,
   countUniqueColors,
   computeChannelEntropy,
   computeEdgeComplexity,
@@ -201,6 +202,41 @@ describe('ImageDetector (remote disabled)', () => {
     const r1 = await detector.detect(url, opts);
     const r2 = await detector.detect(url, opts);
     expect(r1).toBe(r2);
+  });
+});
+
+// ── computeVisualAIScore ──────────────────────────────────────────────────────
+
+describe('computeVisualAIScore', () => {
+  test('returns 0 for empty data', () => {
+    expect(computeVisualAIScore(new Uint8ClampedArray(0), 0, 0)).toBe(0);
+  });
+
+  test('returns a low score for a greyscale image (no saturation)', () => {
+    // Grey pixels → meanSat = 0 → uniformSatScore = 0
+    const grey = solidColorPixels(SIZE, 128, 128, 128);
+    const score = computeVisualAIScore(grey, SIZE, SIZE);
+    // channelUniformity is 1 (equal channels), lumScore is high (mean ≈ 0.50),
+    // but uniformSatScore is 0 — combined should be well below 0.5
+    expect(score).toBeLessThan(0.5);
+  });
+
+  test('returns a higher score for uniformly-saturated, well-exposed AI-like data', () => {
+    // Uniform vivid orange: high saturation, low saturation variance → AI-like
+    const vivid = new Uint8ClampedArray(SIZE * SIZE * 4);
+    for (let i = 0; i < vivid.length; i += 4) {
+      vivid[i] = 220; vivid[i + 1] = 120; vivid[i + 2] = 60; vivid[i + 3] = 255;
+    }
+    // meanSat ≈ 0.73, satVar ≈ 0, rawUniformSat = 0.73 → uniformSatScore = 1
+    // channelUniformity: R dominates → some channel spread, but still moderate
+    // lumScore: lum ≈ 0.54 → close to 0.50 → ~0.87
+    expect(computeVisualAIScore(vivid, SIZE, SIZE)).toBeGreaterThan(0.40);
+  });
+
+  test('returns a value in [0, 1] for random noisy data', () => {
+    const score = computeVisualAIScore(noisyPixels(SIZE), SIZE, SIZE);
+    expect(score).toBeGreaterThanOrEqual(0);
+    expect(score).toBeLessThanOrEqual(1);
   });
 });
 
