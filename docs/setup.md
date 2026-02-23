@@ -71,6 +71,11 @@ npm install
 make build
 ```
 
+**Windows (PowerShell — recommended)**
+```powershell
+.\scripts\build.ps1
+```
+
 **Windows (Command Prompt)**
 ```bat
 scripts\build.bat all
@@ -103,7 +108,10 @@ Firefox extension built → dist/
 # Linux/macOS
 make build-chrome    # or build-edge / build-firefox
 
-# Windows
+# Windows (PowerShell)
+.\scripts\build.ps1 chrome    # or edge / firefox
+
+# Windows (Command Prompt)
 scripts\build.bat chrome    # or edge / firefox
 ```
 
@@ -176,7 +184,10 @@ When **Remote classification** is off, the popup shows a note recommending Mediu
 # Linux/macOS
 make test
 
-# Windows
+# Windows (PowerShell — recommended)
+.\scripts\build.ps1 test
+
+# Windows (Command Prompt)
 scripts\build.bat test
 
 # Any platform
@@ -192,16 +203,16 @@ Tests:  50 passed, 50 total
 
 ## 8. Available make/script targets
 
-| `make` target | `scripts\build.bat` argument | What it does |
-|---|---|---|
-| `make install` | — | `npm install` |
-| `make build` | `all` | Build core + all three extensions |
-| `make build-core` | `core` | Build core library only |
-| `make build-chrome` | `chrome` | Build Chrome extension only |
-| `make build-edge` | `edge` | Build Edge extension only |
-| `make build-firefox` | `firefox` | Build Firefox extension only |
-| `make test` | `test` | Run all unit tests |
-| `make clean` | `clean` | Remove all `dist/` folders |
+| `make` target | PowerShell (`build.ps1`) | CMD (`build.bat`) | What it does |
+|---|---|---|---|
+| `make install` | — | — | `npm install` |
+| `make build` | `.\scripts\build.ps1` | `scripts\build.bat all` | Build core + all three extensions |
+| `make build-core` | `.\scripts\build.ps1 core` | `scripts\build.bat core` | Build core library only |
+| `make build-chrome` | `.\scripts\build.ps1 chrome` | `scripts\build.bat chrome` | Build Chrome extension only |
+| `make build-edge` | `.\scripts\build.ps1 edge` | `scripts\build.bat edge` | Build Edge extension only |
+| `make build-firefox` | `.\scripts\build.ps1 firefox` | `scripts\build.bat firefox` | Build Firefox extension only |
+| `make test` | `.\scripts\build.ps1 test` | `scripts\build.bat test` | Run all unit tests |
+| `make clean` | `.\scripts\build.ps1 clean` | `scripts\build.bat clean` | Remove all `dist/` folders |
 
 ---
 
@@ -212,6 +223,7 @@ Tests:  50 passed, 50 total
 | `node: command not found` | Node.js not on PATH — re-open terminal after install |
 | `npm install` ENOENT errors | Make sure you're in the repo root, not a subdirectory |
 | `npm install` permission error (Linux) | Don't use `sudo npm install` — fix npm global permissions or use nvm |
+| `build.ps1 cannot be loaded, running scripts is disabled` | Run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once in PowerShell |
 | Extension shows "Could not load background script" | You loaded `src/` instead of `dist/` — re-do Load Unpacked pointing at `dist/` |
 | Extension loads but nothing happens | Check Global toggle is On; open DevTools → Console and filter by `[RealityCheck]` |
 | Changes not reflected | Rebuild (`make build-chrome`) then click ↺ Reload in `chrome://extensions/` |
