@@ -2,6 +2,18 @@
 
 ## Performance design
 
+### Photorealism pre-filter
+
+Before any AI-generation analysis or remote call, every image passes through a canvas-based photorealism pre-filter at 64 × 64 resolution. Non-photorealistic images (icons, cartoons, illustrations, text graphics) are **skipped entirely** — no heuristics run, no remote call is made.
+
+The pre-filter depth is controlled by the **Detection Quality** setting:
+
+| Tier | Analysis | Typical cost |
+|---|---|---|
+| Low | Colour histogram entropy + unique colour count | < 0.1 ms |
+| Medium (default) | Low + block noise/texture variance + saturation distribution | < 1 ms |
+| High | Medium + bundled ML model (TF.js / ONNX, WebGL-accelerated) | 10–50 ms |
+
 ### Viewport-only scanning
 
 The content script uses an `IntersectionObserver` with `rootMargin: '200px'` to only process elements that are visible or about to become visible. Elements that have scrolled out of view are not re-analysed unless their cache entry expires.
@@ -34,7 +46,7 @@ Watermark animations (`flash`, `pulse`) use CSS `@keyframes` rather than `setInt
 
 | Limitation | Impact | Mitigation |
 |---|---|---|
-| Heuristics are surface-level | High false-positive rate for academic/technical writing | Use remote mode for higher accuracy |
+| Heuristics are surface-level | High false-positive rate for academic/technical writing | Remote classifier is on by default and provides better signal |
 | No access to token probabilities | Can't run true perplexity-based detection | Remote model provides better signal |
 | Short texts are excluded (< 80 chars) | Very short AI replies not detected | Intentional: avoids false positives |
 | Filler phrase list is fixed | Novel AI patterns not yet in list | Regularly update the pattern list |
@@ -43,7 +55,8 @@ Watermark animations (`flash`, `pulse`) use CSS `@keyframes` rather than `setInt
 
 | Limitation | Impact | Mitigation |
 |---|---|---|
-| URL heuristics only (local mode) | Reposted/resaved images not detected | Enable remote mode |
+| Pre-filter may skip borderline-photorealistic images | Some photorealistic AI art may be missed | Use Medium or High quality tier |
+| URL heuristics only (remote classification disabled) | Reposted/resaved images not detected | Remote classification is on by default |
 | No EXIF binary parsing | Cannot detect missing camera metadata | Future: integrate EXIF.js |
 | Remote classifier accuracy unknown | Varies by provider and model | Disclose confidence level in UI |
 
@@ -51,7 +64,7 @@ Watermark animations (`flash`, `pulse`) use CSS `@keyframes` rather than `setInt
 
 | Limitation | Impact | Mitigation |
 |---|---|---|
-| URL heuristics only (local mode) | Most deepfakes not detected | Enable remote mode |
+| URL heuristics only (remote classification disabled) | Most deepfakes not detected | Remote classification is on by default |
 | Cross-origin CORS block | Cannot frame-capture YouTube/Vimeo | Intentional privacy/security boundary |
 | Single-frame sampling | Multi-frame temporal artefacts not detected | Future: periodic multi-frame sampling |
 | No on-device deepfake model | Local detection is very limited | Future: ONNX/WebGPU inference |

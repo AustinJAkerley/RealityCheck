@@ -16,7 +16,7 @@
 4. Click **New item** → upload `realitycheck-chrome.zip`.
 5. Fill in:
    - **Store listing**: name, description, screenshots.
-   - **Privacy practices**: declare storage usage, explain that remote calls are opt-in.
+   - **Privacy practices**: declare storage usage, explain that remote classification is on by default and describe the data minimisation measures (pre-filter, payload limits, opt-out available).
    - **Permissions justification**: `storage` (settings), `activeTab` (content analysis), `scripting` (content script injection), `host_permissions <all_urls>` (needed to run content scripts on any page).
 6. Submit for review. Review typically takes a few days to a week.
 

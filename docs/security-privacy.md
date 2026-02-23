@@ -4,7 +4,7 @@
 
 | Permission | Why it is needed |
 |---|---|
-| `storage` | Persist user settings (global toggle, watermark config, API keys) across browser sessions using `chrome.storage.sync` / `browser.storage.sync`. |
+| `storage` | Persist user settings (global toggle, watermark config, detection quality, optional custom API key) across browser sessions using `chrome.storage.sync` / `browser.storage.sync`. |
 | `activeTab` | Read the URL of the active tab to display the per-site hostname in the popup. |
 | `scripting` (Chrome/Edge MV3) | Inject the content script into pages (Manifest V3 requirement). |
 | `host_permissions: <all_urls>` | Allow the content script to run on any page the user visits. Required to analyse content on arbitrary sites. |
@@ -19,35 +19,36 @@ No permissions beyond the above are requested. The extension does not use:
 
 ## Data handling
 
-### Local-only mode (default)
+### Remote classification (on by default)
 
-In local-only mode (the default):
-- **No data ever leaves the browser.**
-- All heuristics run entirely in the content script process.
-- Settings are stored in the browser's built-in extension sync storage.
-- No telemetry, analytics, or crash reporting is collected.
+Remote classification is **enabled by default**. The extension calls our hosted Azure classifier (`https://api.realitycheck.ai/v1/classify`). No API key is required from the user — authentication to downstream AI services is handled server-side by the proxy.
 
-### Remote detection mode (opt-in)
+Before any content is sent off-device, the local photorealism pre-filter runs first. Only images that score above the photorealism threshold proceed; non-photorealistic images (icons, cartoons, text graphics) are skipped entirely and never sent. For text, the remote call is made only when the local heuristic score is inconclusive.
 
-Remote detection must be explicitly enabled by the user. When enabled:
+When a remote call is made, only the minimal payload needed for classification is sent:
+- **Text**: A snippet of up to 2,000 characters.
+- **Images**: A downscaled JPEG thumbnail (max 128 × 128 pixels) plus a content hash.
+- **Video frames**: A single downscaled JPEG frame (max 128 × 128 pixels) plus a content hash.
 
-1. A clear warning is shown in the popup UI: _"When remote mode is active, selected content will be sent to the configured endpoint."_
-2. Only the content currently being analysed is sent:
-   - **Text**: A snippet of up to 2,000 characters.
-   - **Images**: A downscaled JPEG thumbnail (max 128×128 pixels).
-   - **Video frames**: A single downscaled JPEG frame (max 128×128 pixels).
-3. The full page DOM, browsing history, cookies, credentials, and any other data are **never** sent.
-4. The remote endpoint and API key are configured by the user and stored in `chrome.storage.sync`. They are never hardcoded.
+The full page DOM, browsing history, cookies, credentials, and any other data are **never** sent.
+
+A notice is displayed in the popup whenever remote mode is active.
+
+### Remote classification OFF (user opt-out)
+
+When the user disables remote classification in the popup, **no data ever leaves the browser.** All heuristics run entirely in the content script process. The popup recommends using Medium or High detection quality in this mode for best local accuracy.
 
 ### API key storage
 
-API keys are stored exclusively in `chrome.storage.sync` (or `browser.storage.sync` for Firefox). This storage:
+API keys are only needed for custom/development endpoints configured in the Advanced section. For the default hosted endpoint, no API key is required.
+
+If a custom API key is configured, it is stored exclusively in `chrome.storage.sync` (or `browser.storage.sync` for Firefox). This storage:
 - Is encrypted at rest by the browser.
 - Is accessible only to the extension itself (same extension ID).
 - Syncs across the user's logged-in devices (subject to the user's browser sync settings).
 
 API keys are **never**:
-- Logged to the browser console in release mode.
+- Logged to the browser console.
 - Included in error reports.
 - Sent to any endpoint other than the one the user configured.
 

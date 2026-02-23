@@ -82,11 +82,20 @@ Click the RealityCheck icon in the browser toolbar to open the popup:
 
 - **Global toggle**: Enable/disable detection site-wide.
 - **This site toggle**: Enable/disable detection for the current hostname.
-- **Privacy — Local-only mode**: Default on. Turn off to enable remote detection.
-- **Remote endpoint**: URL of your AI classification API (only used if local-only is off).
-- **API key**: Stored in extension sync storage. Never logged or transmitted except to your configured endpoint.
+- **Detection Quality**: `Low` / `Medium` (default) / `High`. Controls how deeply the local photorealism pre-filter analyses images before escalating to the remote classifier.
+  - _Low_ — Fastest, basic canvas checks. Negligible cost.
+  - _Medium_ — Balanced. Recommended for most users.
+  - _High_ — Most accurate; uses more resources (bundled ML model when available).
+- **Remote classification**: Enabled by default. The extension sends photorealistic images and inconclusive text to our hosted Azure classifier (`https://api.realitycheck.ai/v1/classify`). No API key required. Toggle off to run entirely on-device.
 - **Watermark mode**: Static / Flash / Pulse / Auto-hide.
 - **Opacity / Animation settings**: Adjust to taste.
+
+#### Advanced settings (collapsed by default)
+
+For development or custom deployments only:
+
+- **Remote endpoint override**: Replace the default endpoint with your own classifier URL.
+- **API key**: Only required for custom endpoints that need authentication. Stored in extension sync storage and never logged.
 
 ---
 
@@ -97,4 +106,4 @@ cd packages/core
 npm test
 ```
 
-All 32 tests should pass.
+All 50 tests should pass.

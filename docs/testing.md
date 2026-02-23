@@ -45,7 +45,7 @@ python3 -m http.server 8080
 ## Testing image detection
 
 1. Load `image-demo.html`.
-2. The 512×512 image (power-of-two dimensions) should receive a "Likely AI Generated" overlay.
+2. The 512×512 image (power-of-two dimensions) should receive a "Likely AI Generated" overlay **if** the photorealism pre-filter scores it as photorealistic. A solid-colour or cartoon-style test image may be skipped by the pre-filter — use a realistic photo or swap in a real photograph to verify the overlay.
 3. The 1920×1200 image (non-AI dimensions) should not receive an overlay.
 4. To test CDN URL detection, replace an image `src` with a real Midjourney or DALL-E URL (right-click → Inspect → edit attribute).
 
@@ -56,7 +56,7 @@ python3 -m http.server 8080
 1. Load `video-demo.html`.
 2. By default, the video URLs point to standard test videos — no AI overlay expected.
 3. To test URL-based detection: right-click → Inspect, change the `<source src>` to a URL containing "runwayml", "pika.art", etc.
-4. To test frame capture: set up a local same-origin video, enable remote detection in the popup, and configure a test endpoint.
+4. To test frame capture with a custom endpoint: open the popup → expand **Advanced settings** → enter a local test endpoint URL. Set up a same-origin video so canvas capture isn't blocked by CORS.
 
 ---
 
