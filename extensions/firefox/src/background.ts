@@ -6,7 +6,7 @@
  * browser.* APIs for MV2 compatibility.
  */
 
-import { SettingsStorage, DEFAULT_SETTINGS, ExtensionSettings } from '../../packages/core/src/index.js';
+import { SettingsStorage, DEFAULT_SETTINGS, ExtensionSettings } from '@reality-check/core';
 
 const storage = new SettingsStorage();
 

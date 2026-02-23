@@ -5,3 +5,4 @@ dist-tests/
 *.d.ts.map
 .DS_Store
 *.log
+tmpclaude*

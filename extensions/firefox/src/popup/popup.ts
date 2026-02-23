@@ -2,7 +2,7 @@
  * RealityCheck Firefox Popup Script
  * Uses WebExtensions `browser` API.
  */
-import { ExtensionSettings, DEFAULT_SETTINGS } from '../../../packages/core/src/index.js';
+import { ExtensionSettings, DEFAULT_SETTINGS } from '@reality-check/core';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 

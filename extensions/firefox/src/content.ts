@@ -12,7 +12,7 @@ import {
   applyMediaWatermark,
   applyTextWatermark,
   WatermarkHandle,
-} from '../../packages/core/src/index.js';
+} from '@reality-check/core';
 
 const pipeline = new DetectionPipeline();
 const handles = new WeakMap<Element, WatermarkHandle>();
