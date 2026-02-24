@@ -91,6 +91,7 @@ This builds:
 2. `extensions/chrome/` → `extensions/chrome/dist/`
 3. `extensions/edge/` → `extensions/edge/dist/`
 4. `extensions/firefox/` → `extensions/firefox/dist/`
+5. `extensions/safari/` → `extensions/safari/dist/`
 
 A successful build looks like:
 ```
@@ -106,13 +107,13 @@ Firefox extension built → dist/
 
 ```bash
 # Linux/macOS
-make build-chrome    # or build-edge / build-firefox
+make build-chrome    # or build-edge / build-firefox / build-safari
 
 # Windows (PowerShell)
-.\scripts\build.ps1 chrome    # or edge / firefox
+.\scripts\build.ps1 chrome    # or edge / firefox / safari
 
 # Windows (Command Prompt)
-scripts\build.bat chrome    # or edge / firefox
+scripts\build.bat chrome    # or edge / firefox / safari
 ```
 
 ### Rebuild after source changes
@@ -157,6 +158,27 @@ Steps are identical to Chrome — both use Manifest V3.
 > cd extensions/firefox/dist
 > web-ext run
 > ```
+
+### Safari
+
+Safari requires Manifest V3 support, available in **Safari 16.4 or later** on macOS Ventura 13.3+.
+
+**Load for development (macOS only):**
+
+1. Enable the Develop menu: Safari → Settings → Advanced → check **Show features for web developers**.
+2. Build the extension: `make build-safari` (or `node extensions/safari/build.js` after building core).
+3. Open Safari → Develop → Show Extension Builder.
+4. Click **(+)** in the bottom-left → **Add Extension…** and select `<repo root>/extensions/safari/dist/`.
+5. Click **Run** to load the extension. The RealityCheck icon appears in the Safari toolbar.
+
+> **After rebuilding**: click **Reload** in the Extension Builder, or remove and re-add the extension.
+
+**For App Store / permanent installation:**
+
+Safari Web Extensions must be wrapped in a native macOS/iOS app using Xcode:
+1. In Xcode, choose **File → New → Target → Safari Web Extension**.
+2. Point it at the `extensions/safari/dist/` folder for the extension resources.
+3. Build and run the Xcode project — Safari will prompt to enable the extension in its settings.
 
 ---
 
@@ -206,11 +228,12 @@ Tests:  50 passed, 50 total
 | `make` target | PowerShell (`build.ps1`) | CMD (`build.bat`) | What it does |
 |---|---|---|---|
 | `make install` | — | — | `npm install` |
-| `make build` | `.\scripts\build.ps1` | `scripts\build.bat all` | Build core + all three extensions |
+| `make build` | `.\scripts\build.ps1` | `scripts\build.bat all` | Build core + all four extensions |
 | `make build-core` | `.\scripts\build.ps1 core` | `scripts\build.bat core` | Build core library only |
 | `make build-chrome` | `.\scripts\build.ps1 chrome` | `scripts\build.bat chrome` | Build Chrome extension only |
 | `make build-edge` | `.\scripts\build.ps1 edge` | `scripts\build.bat edge` | Build Edge extension only |
 | `make build-firefox` | `.\scripts\build.ps1 firefox` | `scripts\build.bat firefox` | Build Firefox extension only |
+| `make build-safari` | `.\scripts\build.ps1 safari` | `scripts\build.bat safari` | Build Safari extension only |
 | `make test` | `.\scripts\build.ps1 test` | `scripts\build.bat test` | Run all unit tests |
 | `make clean` | `.\scripts\build.ps1 clean` | `scripts\build.bat clean` | Remove all `dist/` folders |
 

@@ -1,0 +1,17 @@
+{
+  "name": "reality-check-safari",
+  "version": "1.0.0",
+  "description": "RealityCheck Safari Extension",
+  "private": true,
+  "scripts": {
+    "build": "node build.js",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@reality-check/core": "*"
+  },
+  "devDependencies": {
+    "@types/firefox-webext-browser": "^120.0.1",
+    "typescript": "^5.4.5"
+  }
+}

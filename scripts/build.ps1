@@ -1,11 +1,12 @@
 # RealityCheck — Windows PowerShell build helper
-# Usage:  .\scripts\build.ps1 [all | core | chrome | edge | firefox | test | clean]
+# Usage:  .\scripts\build.ps1 [all | core | chrome | edge | firefox | safari | test | clean]
 # Requires: Node.js 18+ and npm 9+ on PATH
 #
 # Run from the repo root:
 #   .\scripts\build.ps1          # defaults to "all"
 #   .\scripts\build.ps1 test     # run unit tests
 #   .\scripts\build.ps1 chrome   # build core + Chrome extension only
+#   .\scripts\build.ps1 safari   # build core + Safari extension only
 #   .\scripts\build.ps1 clean    # remove all dist folders
 
 param(
@@ -38,7 +39,8 @@ function Invoke-Clean {
         "$RepoRoot\packages\core\dist",
         "$RepoRoot\extensions\chrome\dist",
         "$RepoRoot\extensions\edge\dist",
-        "$RepoRoot\extensions\firefox\dist"
+        "$RepoRoot\extensions\firefox\dist",
+        "$RepoRoot\extensions\safari\dist"
     )
     foreach ($d in $dirs) {
         if (Test-Path $d) {
@@ -66,6 +68,7 @@ switch ($Target.ToLower()) {
         Invoke-ExtensionBuild "chrome"
         Invoke-ExtensionBuild "edge"
         Invoke-ExtensionBuild "firefox"
+        Invoke-ExtensionBuild "safari"
         Write-Host "`nAll extensions built successfully." -ForegroundColor Green
     }
     "core" {
@@ -87,6 +90,11 @@ switch ($Target.ToLower()) {
         Invoke-ExtensionBuild "firefox"
         Write-Host "Firefox extension built successfully." -ForegroundColor Green
     }
+    "safari" {
+        Invoke-CoreBuild
+        Invoke-ExtensionBuild "safari"
+        Write-Host "Safari extension built successfully." -ForegroundColor Green
+    }
     "test" {
         Invoke-Tests
     }
@@ -95,7 +103,7 @@ switch ($Target.ToLower()) {
     }
     default {
         Write-Error "Unknown target: $Target"
-        Write-Host "Usage: .\scripts\build.ps1 [all | core | chrome | edge | firefox | test | clean]"
+        Write-Host "Usage: .\scripts\build.ps1 [all | core | chrome | edge | firefox | safari | test | clean]"
         exit 1
     }
 }
