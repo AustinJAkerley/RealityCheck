@@ -137,9 +137,9 @@ function _attachTrackingListeners(): void {
 
 function confidenceLabel(confidence: ConfidenceLevel): string {
   const map: Record<ConfidenceLevel, string> = {
-    low: 'Low confidence',
-    medium: 'Medium confidence',
-    high: 'High confidence',
+    low: 'Low Confidence',
+    medium: 'Medium Confidence',
+    high: 'High Confidence',
   };
   return map[confidence];
 }
@@ -218,14 +218,9 @@ export function applyMediaWatermark(
   label.textContent = 'Likely AI Generated';
 
   const mediaType = media instanceof HTMLVideoElement ? 'Video' : 'Photo';
-  const typeBadge = document.createElement('div');
-  typeBadge.className = 'rc-badge';
-  typeBadge.textContent = mediaType;
-  label.appendChild(typeBadge);
-
   const badge = document.createElement('div');
   badge.className = 'rc-badge';
-  badge.textContent = confidenceLabel(confidence);
+  badge.textContent = `${mediaType} ${confidenceLabel(confidence)}`;
   label.appendChild(badge);
   container.appendChild(label);
   document.body.appendChild(container);
