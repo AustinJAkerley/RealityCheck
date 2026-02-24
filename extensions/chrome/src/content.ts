@@ -75,51 +75,49 @@ function isSiteEnabled(settings: ExtensionSettings): boolean {
 
 // ── Video thumbnail helpers ──────────────────────────────────────────────────
 
+/** Check whether two bounding rects overlap by more than 50% of the smaller one's area. */
+function rectsOverlap(a: DOMRect, b: DOMRect): boolean {
+  const overlapX = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left));
+  const overlapY = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+  const overlapArea = overlapX * overlapY;
+  const smallerArea = Math.min(a.width * a.height, b.width * b.height);
+  return smallerArea > 0 && overlapArea > 0.5 * smallerArea;
+}
+
 /**
- * Check if an image is likely a video thumbnail/poster by looking for a
- * <video> element in a nearby ancestor that visually overlaps with the image.
+ * Check if an image is likely a video thumbnail/poster by checking whether
+ * ANY <video> on the page visually overlaps with it.  Pure bounding-rect
+ * comparison — independent of DOM nesting depth.
  */
 function isVideoThumbnail(img: HTMLImageElement): boolean {
   const ir = img.getBoundingClientRect();
   if (ir.width === 0 || ir.height === 0) return false;
-  let el: Element | null = img.parentElement;
-  for (let i = 0; i < 3 && el; i++) {
-    const video = el.querySelector('video');
-    if (video) {
-      const vr = video.getBoundingClientRect();
-      const overlapX = Math.max(0, Math.min(ir.right, vr.right) - Math.max(ir.left, vr.left));
-      const overlapY = Math.max(0, Math.min(ir.bottom, vr.bottom) - Math.max(ir.top, vr.top));
-      if (overlapX * overlapY > 0.5 * ir.width * ir.height) return true;
-    }
-    el = el.parentElement;
+  const videos = document.querySelectorAll<HTMLVideoElement>('video');
+  for (const video of videos) {
+    const vr = video.getBoundingClientRect();
+    if (vr.width === 0 || vr.height === 0) continue;
+    if (rectsOverlap(ir, vr)) return true;
   }
   return false;
 }
 
 /**
- * Remove watermarks from thumbnail images that visually overlap with a video.
- * Called after a video gets its watermark so the thumbnail's watermark
- * doesn't show alongside the video's watermark.
+ * Remove watermarks from ALL watermarked images that visually overlap with a
+ * video.  Iterates the handles map directly so it works regardless of DOM
+ * nesting depth between the <img> and <video>.
  */
 function removeThumbnailWatermarks(video: HTMLVideoElement): void {
   const vr = video.getBoundingClientRect();
   if (vr.width === 0 || vr.height === 0) return;
-  let container: Element | null = video.parentElement;
-  for (let i = 0; i < 3 && container; i++) {
-    container.querySelectorAll<HTMLImageElement>('img').forEach((img) => {
-      const handle = handles.get(img);
-      if (!handle) return;
-      const ir = img.getBoundingClientRect();
-      if (ir.width === 0 || ir.height === 0) return;
-      const overlapX = Math.max(0, Math.min(ir.right, vr.right) - Math.max(ir.left, vr.left));
-      const overlapY = Math.max(0, Math.min(ir.bottom, vr.bottom) - Math.max(ir.top, vr.top));
-      if (overlapX * overlapY > 0.5 * ir.width * ir.height) {
-        handle.remove();
-        handles.delete(img);
-      }
-    });
-    container = container.parentElement;
-  }
+  handles.forEach((handle, el) => {
+    if (!(el instanceof HTMLImageElement)) return;
+    const ir = el.getBoundingClientRect();
+    if (ir.width === 0 || ir.height === 0) return;
+    if (rectsOverlap(ir, vr)) {
+      handle.remove();
+      handles.delete(el);
+    }
+  });
 }
 
 // ── Element processors ───────────────────────────────────────────────────────
