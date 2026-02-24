@@ -60,6 +60,27 @@ chrome.runtime.onMessage.addListener(
       return false;
     }
 
+    if (message.type === 'FETCH_IMAGE_BYTES') {
+      // Fetch image bytes on behalf of the content script.
+      // Background service workers are not subject to CORS restrictions,
+      // allowing EXIF and C2PA metadata to be read from cross-origin images.
+      const url = message.payload as string;
+      fetch(url)
+        .then(async (resp) => {
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const blob = await resp.blob();
+          return new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(blob);
+          });
+        })
+        .then((dataUrl) => sendResponse({ ok: true, dataUrl }))
+        .catch(() => sendResponse({ ok: false, dataUrl: null }));
+      return true; // async response
+    }
+
     return false;
   }
 );

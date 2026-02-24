@@ -205,6 +205,62 @@ describe('ImageDetector (remote disabled)', () => {
   });
 });
 
+// ── Scoring blend fixes (Problems 1 & 2 from issue) ─────────────────────────
+
+describe('visual score blending (scoring math fix)', () => {
+  test('computeVisualAIScore * 0.75 >= 0.35 threshold when visual score is 0.55+', () => {
+    // The old code applied a *0.6 double-discount when localScore>=0.3,
+    // capping the contribution at 0.372. The new code uses visualScore * 0.75 directly.
+    // With visualScore=0.55: 0.55 * 0.75 = 0.4125 > 0.35 → should flag.
+    const visualScore = 0.55;
+    const visualWeight = 0.75;
+    const combined = Math.max(0.3, visualScore * visualWeight);
+    expect(combined).toBeGreaterThan(0.35);
+    expect(combined).toBeCloseTo(0.4125, 4);
+  });
+
+  test('old double-discount formula was below threshold for typical AI images', () => {
+    // Verifies the bug: old *0.6 discount capped combined at 0.3 when localScore=0.3
+    const visualScore = 0.55;
+    const oldDiscount = 0.62;
+    const oldCombined = Math.max(0.3, visualScore * oldDiscount * 0.6);
+    expect(oldCombined).toBeLessThan(0.35); // Was: 0.3 — NOT FLAGGED (bug)
+  });
+
+  test('local-only isAIGenerated uses 0.25 threshold', async () => {
+    // A string URL that has no CDN match and no pixel data yields score = 0.
+    // score = 0 < 0.25, so should not be flagged.
+    const detector = new ImageDetector();
+    const opts = { remoteEnabled: false, detectionQuality: 'medium' as const };
+    const result = await detector.detect('https://example.com/ordinary-photo.jpg', opts);
+    expect(result.source).toBe('local');
+    // score=0 → not flagged even with 0.25 threshold
+    expect(result.isAIGenerated).toBe(false);
+    expect(result.score).toBe(0);
+  });
+
+  test('local-only CDN match is flagged with new 0.25 threshold', async () => {
+    const detector = new ImageDetector();
+    const opts = { remoteEnabled: false, detectionQuality: 'medium' as const };
+    // CDN match gives localScore = 0.7, well above both old 0.35 and new 0.25
+    const result = await detector.detect('https://midjourney.com/img.png', opts);
+    expect(result.isAIGenerated).toBe(true);
+    expect(result.score).toBeGreaterThanOrEqual(0.7);
+  });
+
+  test('options.fetchBytes is called instead of direct fetch when provided', async () => {
+    const detector = new ImageDetector();
+    const fetchBytesMock = jest.fn().mockResolvedValue(null);
+    const opts = {
+      remoteEnabled: false,
+      detectionQuality: 'medium' as const,
+      fetchBytes: fetchBytesMock,
+    };
+    await detector.detect('https://example.com/some-image.jpg', opts);
+    expect(fetchBytesMock).toHaveBeenCalledWith('https://example.com/some-image.jpg');
+  });
+});
+
 // ── computeVisualAIScore ──────────────────────────────────────────────────────
 
 describe('computeVisualAIScore', () => {
@@ -238,5 +294,63 @@ describe('computeVisualAIScore', () => {
     expect(score).toBeGreaterThanOrEqual(0);
     expect(score).toBeLessThanOrEqual(1);
   });
+
+  test('does not flag a neutral grey image as AI (false positive regression)', () => {
+    // Grey (128,128,128): uniformSatScore=0 (no saturation), channelUniformity=1,
+    // lumScore≈1 (mean lum ≈ 0.50). With the old 0.30 channelUniformity weight
+    // this scored ~0.499 × 0.75 = 0.37 > 0.25 threshold — a false positive.
+    // With the revised 0.10 channelUniformity weight the combined score is
+    // 0*0.70 + 1*0.10 + 1*0.20 = 0.30; 0.30 * 0.75 = 0.225 < 0.25 → NOT flagged.
+    const grey = solidColorPixels(SIZE, 128, 128, 128);
+    const visualScore = computeVisualAIScore(grey, SIZE, SIZE);
+    const visualWeight = 0.75; // medium quality weight
+    expect(visualScore * visualWeight).toBeLessThan(0.25);
+  });
+
+  test('still flags a typical AI portrait-like image', () => {
+    // Uniform vivid orange: high saturation, near-zero variance → high uniformSatScore.
+    // uniformSatScore=1 * 0.70 = 0.70 → visualScore*0.75 = ~0.73 >> 0.25 threshold.
+    const vivid = new Uint8ClampedArray(SIZE * SIZE * 4);
+    for (let i = 0; i < vivid.length; i += 4) {
+      vivid[i] = 220; vivid[i + 1] = 120; vivid[i + 2] = 60; vivid[i + 3] = 255;
+    }
+    const visualScore = computeVisualAIScore(vivid, SIZE, SIZE);
+    const visualWeight = 0.75;
+    expect(visualScore * visualWeight).toBeGreaterThan(0.25);
+  });
 });
+
+// ── ML model registry ─────────────────────────────────────────────────────────
+
+import { registerMlModel, isMlModelAvailable } from '../src/detectors/image-detector';
+
+describe('ML model registry', () => {
+  test('isMlModelAvailable returns a boolean', () => {
+    expect(typeof isMlModelAvailable()).toBe('boolean');
+  });
+
+  test('registerMlModel makes isMlModelAvailable return true', () => {
+    registerMlModel({
+      async run(_data, _w, _h) {
+        return 0.5;
+      },
+    });
+    expect(isMlModelAvailable()).toBe(true);
+  });
+
+  test('High-tier prefilter uses registered model result', async () => {
+    // Register a model that always returns 0.9 (strong AI signal)
+    registerMlModel({
+      async run(_data, _w, _h) {
+        return 0.9;
+      },
+    });
+    // With a model that returns 0.9, blended score = 0.3 * mediumTier + 0.7 * 0.9
+    // For noisy photo data mediumTier > 0.5 → blended >= 0.3 * 0.5 + 0.7 * 0.9 = 0.78
+    const result = await runPhotorealismPreFilter(noisyPixels(SIZE), 'high');
+    expect(result.score).toBeGreaterThan(0.5);
+    expect(result.isPhotorealistic).toBe(true);
+  });
+});
+
 

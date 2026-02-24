@@ -16,15 +16,19 @@ import {
   ExtensionSettings,
   DetectorOptions,
   applyMediaWatermark,
-  applyDevModeWatermark,
+  applyNotAIWatermark,
   applyTextWatermark,
   WatermarkHandle,
 } from '@reality-check/core';
 
 const pipeline = new DetectionPipeline();
 
-/** Track watermark handles so we can remove them if settings change */
-const handles = new WeakMap<Element, WatermarkHandle>();
+/**
+ * Track active watermark handles for elements that have been watermarked.
+ * Map (not WeakMap) so we can iterate and remove all overlays when settings
+ * change (e.g. toggling devMode on/off).
+ */
+const handles = new Map<Element, WatermarkHandle>();
 
 let currentSettings: ExtensionSettings | null = null;
 
@@ -35,6 +39,21 @@ function getDetectorOptions(settings: ExtensionSettings): DetectorOptions {
     remoteEnabled: settings.remoteEnabled,
     detectionQuality: settings.detectionQuality,
     remoteEndpoint: settings.remoteEndpoint || undefined,
+    // Fetch image bytes via the background service worker, which is not
+    // subject to CORS restrictions, enabling EXIF/C2PA analysis on cross-origin images.
+    fetchBytes: (url: string) =>
+      new Promise<string | null>((resolve) => {
+        chrome.runtime.sendMessage(
+          { type: 'FETCH_IMAGE_BYTES', payload: url },
+          (response: { ok: boolean; dataUrl: string | null } | undefined) => {
+            if (chrome.runtime.lastError || !response?.ok) {
+              resolve(null);
+            } else {
+              resolve(response.dataUrl ?? null);
+            }
+          }
+        );
+      }),
   };
 }
 
@@ -52,27 +71,19 @@ async function processImage(img: HTMLImageElement, settings: ExtensionSettings):
   if (handles.has(img)) return;
   if (!img.complete || img.naturalWidth < 100 || img.naturalHeight < 100) return;
 
-  if (settings.devMode) {
-    handles.set(img, applyDevModeWatermark(img, settings.watermark));
-    return;
-  }
-
   const opts = getDetectorOptions(settings);
   const result = await pipeline.analyzeImage(img, opts);
 
   if (result.isAIGenerated) {
     const handle = applyMediaWatermark(img, result.confidence, settings.watermark);
     handles.set(img, handle);
+  } else if (settings.devMode) {
+    handles.set(img, applyNotAIWatermark(img, settings.watermark));
   }
 }
 
 async function processVideo(video: HTMLVideoElement, settings: ExtensionSettings): Promise<void> {
   if (handles.has(video)) return;
-
-  if (settings.devMode) {
-    handles.set(video, applyDevModeWatermark(video, settings.watermark));
-    return;
-  }
 
   const opts = getDetectorOptions(settings);
   const result = await pipeline.analyzeVideo(video, opts);
@@ -80,6 +91,8 @@ async function processVideo(video: HTMLVideoElement, settings: ExtensionSettings
   if (result.isAIGenerated) {
     const handle = applyMediaWatermark(video, result.confidence, settings.watermark);
     handles.set(video, handle);
+  } else if (settings.devMode) {
+    handles.set(video, applyNotAIWatermark(video, settings.watermark));
   }
 }
 
@@ -136,19 +149,19 @@ function runScan(settings: ExtensionSettings): void {
 
 let observer: IntersectionObserver | null = null;
 
-function startObserver(settings: ExtensionSettings): void {
+function startObserver(): void {
   observer?.disconnect();
   observer = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
+        if (!entry.isIntersecting || !currentSettings) continue;
         const el = entry.target as HTMLElement;
         if (el instanceof HTMLImageElement) {
-          processImage(el, settings).catch(console.error);
+          processImage(el, currentSettings).catch(console.error);
         } else if (el instanceof HTMLVideoElement) {
-          processVideo(el, settings).catch(console.error);
+          processVideo(el, currentSettings).catch(console.error);
         } else if (TEXT_TAGS.has(el.tagName)) {
-          processTextNode(el, settings).catch(console.error);
+          processTextNode(el, currentSettings).catch(console.error);
         }
       }
     },
@@ -183,7 +196,7 @@ async function init(): Promise<void> {
   >({ type: 'GET_SETTINGS' });
 
   currentSettings = settings;
-  startObserver(settings);
+  startObserver();
   startMutationObserver(settings);
   runScan(settings);
 }
@@ -193,7 +206,12 @@ chrome.runtime.onMessage.addListener(
   (message: { type: string; payload?: unknown }) => {
     if (message.type === 'SETTINGS_UPDATED') {
       currentSettings = message.payload as ExtensionSettings;
-      // Re-run scan with new settings
+      // Remove all existing watermarks before re-scanning with updated settings.
+      // Without this, elements that were watermarked (e.g. flagged as AI) would
+      // be skipped on the next scan and never receive the new watermark style
+      // (e.g. toggling devMode on/off would have no effect on them).
+      handles.forEach((handle) => handle.remove());
+      handles.clear();
       if (isSiteEnabled(currentSettings)) {
         runScan(currentSettings);
       }

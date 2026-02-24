@@ -5,25 +5,29 @@
  * 1. Photorealism pre-filter (tier-dependent canvas analysis).
  *    - If the image is NOT photorealistic (icon, cartoon, text graphic), skip entirely.
  *    - If it IS photorealistic (or uncertain), continue to step 2.
- * 2. Local heuristics: CDN URL patterns, power-of-two dimensions, AI aspect ratios.
+ * 2. Local heuristics: CDN URL patterns, power-of-two dimensions, AI aspect ratios,
+ *    EXIF metadata analysis, and C2PA/Content Credentials detection.
  * 3. If remoteEnabled: send to the hosted classifier (DEFAULT_REMOTE_ENDPOINT).
  *    Remote result is blended with local score (70% remote, 30% local).
  *
  * Pre-filter tiers:
  *   low:    Color histogram entropy + unique color count (canvas 64×64, ~zero cost)
  *   medium: Low + block noise/texture variance + saturation distribution
- *   high:   Medium + bundled ML model (stub — see HIGH_TIER_ML_AVAILABLE below)
+ *   high:   Medium + registered ML model (via registerMlModel) when available,
+ *           otherwise falls back to medium-tier canvas analysis.
  *
  * Known limitations: local heuristics have low accuracy for novel AI models.
  * See docs/architecture.md for details.
  */
-import { DetectionResult, DetectionQuality, DetectorOptions, PhotorealismResult } from '../types.js';
+import { DetectionResult, DetectionQuality, DetectorOptions, PhotorealismResult, MlModelRunner } from '../types.js';
 import { Detector } from '../types.js';
 import { DEFAULT_REMOTE_ENDPOINT } from '../types.js';
 import { DetectionCache } from '../utils/cache.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
 import { hashUrl, hashDataUrl } from '../utils/hash.js';
 import { createRemoteAdapter } from '../adapters/remote-adapter.js';
+import { parseExifFromDataUrl, getExifAIScore } from '../utils/exif-parser.js';
+import { detectC2PAFromDataUrl } from '../utils/c2pa.js';
 
 // ── Pre-filter constants ─────────────────────────────────────────────────────
 
@@ -37,11 +41,56 @@ const PREFILTER_SIZE = 64;
  */
 const PHOTOREALISM_SKIP_THRESHOLD = 0.20;
 
+// ── ML model registry ────────────────────────────────────────────────────────
+
 /**
- * Set to true when an ONNX / TF.js model is bundled with the extension.
- * Until then, High tier falls back to Medium-tier canvas analysis.
+ * Module-level registry for a pluggable on-device ML model runner.
+ * Call `registerMlModel()` at extension startup to activate High-tier inference.
  */
-const HIGH_TIER_ML_AVAILABLE = false;
+let _mlModelRunner: MlModelRunner | null = null;
+
+/**
+ * Register an on-device ML model runner for High-tier image analysis.
+ *
+ * The runner is called during High-tier photorealism scoring and can also be
+ * used as an additional AI-generation signal in `detect()`.
+ *
+ * Example (TensorFlow.js):
+ * ```ts
+ * import * as tf from '@tensorflow/tfjs';
+ * registerMlModel({
+ *   async run(data, width, height) {
+ *     const tensor = tf.tensor4d(data, [1, height, width, 4]);
+ *     const [, score] = (await model.predict(tensor) as tf.Tensor).dataSync();
+ *     return score;
+ *   },
+ * });
+ * ```
+ *
+ * Example (ONNX Runtime Web):
+ * ```ts
+ * import * as ort from 'onnxruntime-web';
+ * const session = await ort.InferenceSession.create('./model.onnx');
+ * registerMlModel({
+ *   async run(data, width, height) {
+ *     const input = new ort.Tensor('uint8', data, [1, height, width, 4]);
+ *     const { output } = await session.run({ input });
+ *     return output.data[1] as number; // AI-class probability
+ *   },
+ * });
+ * ```
+ */
+export function registerMlModel(runner: MlModelRunner): void {
+  _mlModelRunner = runner;
+}
+
+/**
+ * Returns true when an ML model runner has been registered.
+ * Used by tests and extension startup code to check availability.
+ */
+export function isMlModelAvailable(): boolean {
+  return _mlModelRunner !== null;
+}
 
 // ── Pre-filter helper functions ──────────────────────────────────────────────
 
@@ -170,14 +219,18 @@ export function computeSaturationVariance(data: Uint8ClampedArray): number {
  *  1. **Uniform-saturation score** — AI images have high mean saturation
  *     with LOW variance (consistent colour richness). Vivid real photos have
  *     high mean saturation but HIGH variance (vivid areas alongside shadows).
+ *     **Primary signal (weight 0.70)** — the most discriminative single feature.
  *
  *  2. **Channel-variance uniformity** — AI generators produce no lens
  *     chromatic aberration, so R/G/B channels have similar variance.
  *     Real photos show channel-specific variance differences.
+ *     **Minor signal (weight 0.10)** — fires for most JPEG images regardless
+ *     of origin, so it is given low weight to avoid false positives.
  *
  *  3. **Luminance balance** — AI images are typically well-exposed
  *     (mean luminance near 0.50). Very dark or very bright images are
  *     more likely to be real photographs taken in challenging conditions.
+ *     **Secondary signal (weight 0.20)** — useful corroborating evidence.
  *
  * Returns 0–1; higher = more likely AI-generated.
  * Expected accuracy: ~50–60% on typical AI image sets (local heuristics only).
@@ -250,7 +303,7 @@ export function computeVisualAIScore(
   // Peaks at 0.50, falls off for dark (<0.30) or bright (>0.70) images
   const lumScore = Math.max(0, 1 - Math.abs(meanLum - 0.50) * 3.2);
 
-  return uniformSatScore * 0.50 + channelUniformityScore * 0.30 + lumScore * 0.20;
+  return uniformSatScore * 0.70 + channelUniformityScore * 0.10 + lumScore * 0.20;
 }
 
 // ── Pre-filter scoring ───────────────────────────────────────────────────────
@@ -297,19 +350,20 @@ export function scoreMediumTier(data: Uint8ClampedArray): number {
 
 /**
  * Score using High-tier analysis.
- * Currently falls back to Medium-tier canvas analysis because no ML model is bundled.
- * When a bundled ML model becomes available (HIGH_TIER_ML_AVAILABLE = true):
- * 1. Bundle a TensorFlow.js / ONNX Runtime Web compatible model with the extension.
- * 2. Load it at startup and expose a `runMLModel(data: ImageData): Promise<number>` function.
- * 3. Set HIGH_TIER_ML_AVAILABLE = true and implement the async call below.
+ * Uses the registered ML model runner when available (see `registerMlModel`).
+ * Falls back to Medium-tier canvas analysis when no model is registered.
  */
 async function scoreHighTier(data: Uint8ClampedArray): Promise<number> {
-  if (HIGH_TIER_ML_AVAILABLE) {
-    // TODO: call the bundled ML model here.
-    // const mlScore = await runMLModel(data);
-    // return scoreMediumTier(data) * 0.3 + mlScore * 0.7;
+  if (_mlModelRunner !== null) {
+    try {
+      const mlScore = await _mlModelRunner.run(data, PREFILTER_SIZE, PREFILTER_SIZE);
+      // Blend: ML model result weighted 70%, canvas analysis 30%
+      return scoreMediumTier(data) * 0.3 + mlScore * 0.7;
+    } catch {
+      // ML inference failed — fall back to medium tier
+    }
   }
-  // Fall back to Medium tier until a model is bundled
+  // Fall back to Medium tier when no model is registered
   return scoreMediumTier(data);
 }
 
@@ -501,15 +555,68 @@ export class ImageDetector implements Detector {
     let combinedLocalScore = localScore;
     if (pixelData && quality !== 'low') {
       const visualScore = computeVisualAIScore(pixelData, PREFILTER_SIZE, PREFILTER_SIZE);
-      // When CDN/dimension evidence is weak, let visual score drive the result
-      // (discounted slightly to stay conservative on false positives).
-      // When CDN evidence is strong, visual score provides an additional floor.
-      const discount = quality === 'high' ? 0.75 : 0.62;
-      combinedLocalScore =
-        localScore >= 0.3
-          ? Math.max(localScore, visualScore * discount * 0.6)
-          : Math.max(localScore, visualScore * discount);
+      // Give visual pixel analysis equal standing with URL/dimension heuristics.
+      // Take the higher of the URL/dimension score or the visual score (after discount).
+      // The previous *0.6 double-discount when localScore>=0.3 made visual analysis
+      // nearly irrelevant for the most common case (re-uploaded AI images with some
+      // dimension match but no CDN URL match). Removed that double-discount.
+      const visualWeight = quality === 'high' ? 0.85 : 0.75;
+      combinedLocalScore = Math.max(localScore, visualScore * visualWeight);
     }
+
+    // ── Step 2c: EXIF metadata analysis ──────────────────────────────────────
+    // EXIF and C2PA metadata reside in the original image binary.
+    // Canvas re-encoding strips all metadata. Direct fetch() from a content
+    // script hits CORS restrictions for cross-origin images.
+    // When options.fetchBytes is provided (e.g. via a background service worker
+    // that is not CORS-restricted), use it. Otherwise fall back to direct fetch.
+    let metadataDataUrl: string | null = null;
+    if (src && /^https?:\/\//.test(src)) {
+      try {
+        if (options.fetchBytes) {
+          // Extension-provided fetch: bypasses CORS (background SW context)
+          metadataDataUrl = await options.fetchBytes(src);
+        } else {
+          // Direct fetch: only works for same-origin / CORS-enabled images
+          const resp = await fetch(src, { cache: 'force-cache' });
+          if (resp.ok) {
+            const blob = await resp.blob();
+            metadataDataUrl = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result as string);
+              reader.onerror = () => reject(reader.error);
+              reader.readAsDataURL(blob);
+            });
+          }
+        }
+      } catch {
+        // CORS block, network error, or unsupported environment — skip
+      }
+    } else if (src && src.startsWith('data:')) {
+      // Already a data URL — use directly
+      metadataDataUrl = src;
+    }
+
+    let exifScore = 0;
+    if (metadataDataUrl) {
+      const exifData = parseExifFromDataUrl(metadataDataUrl);
+      exifScore = getExifAIScore(exifData);
+    }
+
+    // ── Step 2d: C2PA / Content Credentials detection ─────────────────────────
+    // C2PA presence is a positive authenticity signal (reduces AI score).
+    let c2paAdjustment = 0;
+    if (metadataDataUrl) {
+      const c2pa = detectC2PAFromDataUrl(metadataDataUrl);
+      c2paAdjustment = c2pa.scoreAdjustment;
+    }
+
+    // Blend EXIF signal into combined local score (EXIF is a 15% weight)
+    if (exifScore > 0) {
+      combinedLocalScore = Math.min(1, combinedLocalScore * 0.85 + exifScore * 0.15);
+    }
+    // Apply C2PA adjustment (negative = more authentic → reduce score)
+    combinedLocalScore = Math.max(0, combinedLocalScore + c2paAdjustment);
 
     let finalScore = combinedLocalScore;
     let source: DetectionResult['source'] = 'local';
@@ -535,9 +642,14 @@ export class ImageDetector implements Detector {
       }
     }
 
+    // Use a lower threshold for local-only results: heuristics alone are weaker
+    // than the remote classifier, so a lower bar catches more AI images while
+    // accepting some false positives. The remote classifier (when enabled) uses
+    // a calibrated 0.35 threshold against the blended remote+local score.
+    const aiThreshold = source === 'local' ? 0.25 : 0.35;
     const result: DetectionResult = {
       contentType: 'image',
-      isAIGenerated: finalScore >= 0.35,
+      isAIGenerated: finalScore >= aiThreshold,
       confidence: scoreToConfidence(finalScore),
       score: finalScore,
       source,

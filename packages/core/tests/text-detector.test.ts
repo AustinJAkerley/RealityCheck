@@ -39,6 +39,27 @@ describe('computeLocalTextScore', () => {
     const score = computeLocalTextScore(manyFillers);
     expect(score).toBeGreaterThan(0.3);
   });
+
+  test('detects newer AI filler phrases', () => {
+    const newFillersText =
+      "That's a great question! Let me break this down for you clearly. " +
+      "I would be happy to explain. It's important to note that this topic is complex. " +
+      "In conclusion, we should consider all perspectives. I hope this helps you understand. " +
+      "Please note that the answer may vary. Feel free to ask any follow-up questions. " +
+      "Without further ado, let's dive into the details of this interesting subject matter.";
+    const score = computeLocalTextScore(newFillersText);
+    expect(score).toBeGreaterThan(0);
+  });
+
+  test('detects "delve" and "leverage" patterns', () => {
+    const buzzwords =
+      "Let us delve into the complex nature of this topic carefully. " +
+      "We can leverage our capabilities to unlock the full potential here. " +
+      "This represents a true paradigm shift in how we approach the matter at hand. " +
+      "Here's a comprehensive guide to understanding all the relevant factors involved.";
+    const score = computeLocalTextScore(buzzwords);
+    expect(score).toBeGreaterThan(0);
+  });
 });
 
 describe('TextDetector (local only)', () => {

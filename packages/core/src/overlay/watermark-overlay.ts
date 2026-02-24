@@ -10,6 +10,11 @@
  * Uses CSS animations instead of JS timers wherever possible.
  * Respects prefers-reduced-motion.
  * Never intercepts pointer events (pointer-events: none).
+ *
+ * Design note: overlays are appended to document.body with position:fixed and
+ * tracked via a single shared scroll/resize listener. This avoids wrapping
+ * media elements in container divs, which would tear them out of flex/grid
+ * layouts (e.g. LinkedIn's feed) and cause them to disappear.
  */
 import type { ConfidenceLevel, WatermarkConfig } from '../types.js';
 
@@ -27,15 +32,23 @@ const CSS_TEMPLATE = `
   100% { opacity: var(--rc-opacity); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .rc-watermark { animation: none !important; }
-  .rc-watermark.rc-mode-flash  { opacity: var(--rc-opacity); }
-  .rc-watermark.rc-mode-pulse  { opacity: var(--rc-opacity); }
+  .rc-watermark-label { animation: none !important; }
+  .rc-watermark-label.rc-mode-flash { opacity: var(--rc-opacity); }
+  .rc-watermark-label.rc-mode-pulse { opacity: var(--rc-opacity); }
 }
+/* Outer container: covers the media element exactly, sits on document.body */
 .rc-watermark {
-  position: absolute;
+  position: fixed;
   z-index: 2147483646;
   pointer-events: none;
   user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+/* Inner label: the diagonal text */
+.rc-watermark-label {
   font-family: system-ui, -apple-system, sans-serif;
   font-weight: 800;
   letter-spacing: 0.12em;
@@ -51,24 +64,19 @@ const CSS_TEMPLATE = `
   padding: 0;
   opacity: var(--rc-opacity);
   white-space: nowrap;
-  /* Diagonal: centred on the element by default (overridden per position) */
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%) rotate(-40deg);
+  transform: rotate(-40deg);
 }
-.rc-watermark.rc-mode-flash {
+.rc-watermark-label.rc-mode-flash {
   animation: rc-flash var(--rc-anim-duration) ease forwards;
 }
-.rc-watermark.rc-mode-pulse {
+.rc-watermark-label.rc-mode-pulse {
   animation: rc-pulse var(--rc-pulse-freq) ease-in-out infinite;
 }
-.rc-watermark.rc-mode-auto-hide {
+.rc-watermark-label.rc-hidden {
+  opacity: 0 !important;
   transition: opacity 0.4s ease;
 }
-.rc-watermark.rc-hidden {
-  opacity: 0 !important;
-}
-.rc-watermark .rc-badge {
+.rc-watermark-label .rc-badge {
   display: block;
   font-size: 0.5em;
   margin-top: 2px;
@@ -98,11 +106,6 @@ const CSS_TEMPLATE = `
   letter-spacing: 0.04em;
   cursor: help;
 }
-/* Wrapper for media elements that need an overlay */
-.rc-media-wrapper {
-  position: relative !important;
-  display: inline-block !important;
-}
 `;
 
 function injectStyles(): void {
@@ -112,6 +115,25 @@ function injectStyles(): void {
   style.textContent = CSS_TEMPLATE;
   (document.head ?? document.documentElement).appendChild(style);
 }
+
+// ── Shared position tracker ───────────────────────────────────────────────────
+// One scroll/resize listener serves all active overlays, avoiding the
+// performance cost of per-overlay listeners.
+
+const _positionUpdaters = new Set<() => void>();
+let _trackingListenerAttached = false;
+
+function _attachTrackingListeners(): void {
+  if (_trackingListenerAttached) return;
+  const update = (): void => { _positionUpdaters.forEach((fn) => fn()); };
+  // capture:true so we see scroll events from any scrollable container, not
+  // just the window scroll, allowing overlays to track inside scrollable divs.
+  document.addEventListener('scroll', update, { passive: true, capture: true });
+  window.addEventListener('resize', update, { passive: true });
+  _trackingListenerAttached = true;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function confidenceLabel(confidence: ConfidenceLevel): string {
   const map: Record<ConfidenceLevel, string> = {
@@ -123,105 +145,45 @@ function confidenceLabel(confidence: ConfidenceLevel): string {
 }
 
 /**
- * Adjust the anchor point of the diagonal watermark based on the position setting.
- * CSS handles the rotation; this sets top/left percentage on the wrapper.
+ * Compute font size proportional to the media element's rendered size.
+ * ≈ 9% of the shorter dimension; clamped to a readable 12–56 px range.
  */
-function positionWatermark(
-  el: HTMLElement,
-  position: WatermarkConfig['position']
-): void {
+function labelFontSize(rect: DOMRect): number {
+  const minDim = Math.min(rect.width, rect.height);
+  return minDim > 0 ? Math.max(12, Math.min(56, Math.round(minDim * 0.09))) : 18;
+}
+
+/**
+ * Return the flex-alignment style values that correspond to the position config.
+ * Used to anchor the diagonal label within the fixed container.
+ */
+function flexAlignment(position: WatermarkConfig['position']): {
+  alignItems: string;
+  justifyContent: string;
+} {
   switch (position) {
-    case 'top-left':
-      el.style.top = '28%';
-      el.style.left = '32%';
-      break;
-    case 'top-right':
-      el.style.top = '28%';
-      el.style.left = '68%';
-      break;
-    case 'bottom':
-      el.style.top = '72%';
-      el.style.left = '50%';
-      break;
-    default: // center — CSS default (top:50%, left:50%)
-      el.style.top = '50%';
-      el.style.left = '50%';
+    case 'top-left':   return { alignItems: 'flex-start', justifyContent: 'flex-start' };
+    case 'top-right':  return { alignItems: 'flex-start', justifyContent: 'flex-end' };
+    case 'bottom':     return { alignItems: 'flex-end',   justifyContent: 'center' };
+    default:           return { alignItems: 'center',     justifyContent: 'center' };
   }
 }
 
 /**
- * Set font size as a fraction of the shorter element dimension so the
- * diagonal text scales with the image and never consumes the whole visual.
- * Falls back to intrinsic dimensions when the element is off-screen.
+ * Should we flash instead of stay static? Switch to flash when the overlay
+ * would cover more than obstructionThreshold of the element area.
  */
-function setDiagonalFontSize(
-  overlay: HTMLElement,
-  media: HTMLImageElement | HTMLVideoElement,
-  wrapper: HTMLElement
-): void {
-  const w =
-    wrapper.offsetWidth ||
-    (media instanceof HTMLImageElement ? media.naturalWidth : media.videoWidth) ||
-    0;
-  const h =
-    wrapper.offsetHeight ||
-    (media instanceof HTMLImageElement ? media.naturalHeight : media.videoHeight) ||
-    0;
-  const minDim = Math.min(w, h);
-  // ≈ 9% of the shorter dimension; clamped to a readable 12–56 px range
-  const px = minDim > 0 ? Math.max(12, Math.min(56, Math.round(minDim * 0.09))) : 18;
-  overlay.style.fontSize = `${px}px`;
-}
-
-/**
- * Determine whether the watermark would significantly obstruct the element.
- * The diagonal text-only mark is far less obstructive than a box, so the
- * threshold is only triggered for very tiny images.
- */
-function shouldAutoFallback(
-  element: HTMLElement,
-  config: WatermarkConfig
-): boolean {
-  const rect = element.getBoundingClientRect();
+function shouldAutoFallback(rect: DOMRect, config: WatermarkConfig): boolean {
   const area = rect.width * rect.height;
   if (area === 0) return false;
-  // Text-only diagonal watermark occupies roughly 15% of total area — only
-  // fall back to flash/auto-hide when the image is smaller than the threshold.
-  const estimatedTextArea = rect.width * 0.6 * 20; // width × approx text height
+  const estimatedTextArea = rect.width * 0.6 * 20;
   return estimatedTextArea / area > config.obstructionThreshold;
 }
 
-function effectiveMode(element: HTMLElement, config: WatermarkConfig): WatermarkConfig['mode'] {
-  if (config.mode === 'static' && shouldAutoFallback(element, config)) {
-    return 'flash';
-  }
-  return config.mode;
-}
-
-/**
- * Wrap a media element (img/video) in a relative-positioned div
- * so the overlay can be positioned absolutely over it.
- * If already wrapped, reuses the existing wrapper.
- */
-function ensureWrapper(media: HTMLElement): HTMLElement {
-  const parent = media.parentElement;
-  if (parent && parent.classList.contains('rc-media-wrapper')) {
-    return parent;
-  }
-  const wrapper = document.createElement('div');
-  wrapper.className = 'rc-media-wrapper';
-
-  // Copy relevant styles to maintain layout
-  const computed = getComputedStyle(media);
-  wrapper.style.display = computed.display === 'block' ? 'block' : 'inline-block';
-
-  media.parentNode?.insertBefore(wrapper, media);
-  wrapper.appendChild(media);
-  return wrapper;
-}
+// ── Public API ────────────────────────────────────────────────────────────────
 
 export interface WatermarkHandle {
-  /** Remove the watermark overlay and unwrap the element */
+  /** Remove the watermark overlay */
   remove(): void;
   /** Update the config (e.g. after user changes settings) */
   update(config: WatermarkConfig): void;
@@ -229,8 +191,10 @@ export interface WatermarkHandle {
 
 /**
  * Apply a diagonal watermark overlay to an image or video element.
- * Styled like a stock-photo watermark: semi-transparent red diagonal text,
- * sized proportionally to the element so it never covers the whole image.
+ *
+ * The overlay is appended to document.body with position:fixed, so the
+ * media element's DOM position is never modified. This prevents layout
+ * breakage on sites that use flex/grid containers (e.g. LinkedIn's feed).
  */
 export function applyMediaWatermark(
   media: HTMLImageElement | HTMLVideoElement,
@@ -238,105 +202,122 @@ export function applyMediaWatermark(
   config: WatermarkConfig
 ): WatermarkHandle {
   injectStyles();
+  _attachTrackingListeners();
 
-  const wrapper = ensureWrapper(media);
-  const mode = effectiveMode(media, config);
+  // Outer container — covers the media element, lives on document.body
+  const container = document.createElement('div');
+  container.className = 'rc-watermark';
+  container.setAttribute('aria-label', 'Likely AI-generated content');
+  container.setAttribute('role', 'img');
+  container.style.setProperty('--rc-anim-duration', `${config.animationDuration}ms`);
+  container.style.setProperty('--rc-pulse-freq', `${config.pulseFrequency}ms`);
 
-  const overlay = document.createElement('div');
-  overlay.className = `rc-watermark rc-mode-${mode}`;
-  overlay.setAttribute('aria-label', 'Likely AI-generated content');
-  overlay.setAttribute('role', 'img');
-  overlay.style.setProperty('--rc-opacity', String(config.opacity / 100));
-  overlay.style.setProperty('--rc-anim-duration', `${config.animationDuration}ms`);
-  overlay.style.setProperty('--rc-pulse-freq', `${config.pulseFrequency}ms`);
-
-  // Font size proportional to image dimensions (never covers the whole image)
-  setDiagonalFontSize(overlay, media, wrapper);
-
-  overlay.textContent = 'Likely AI-Generated';
+  // Inner label — the diagonal text
+  const label = document.createElement('div');
+  label.style.setProperty('--rc-opacity', String(config.opacity / 100));
+  label.textContent = 'Likely AI-Generated';
 
   const badge = document.createElement('div');
   badge.className = 'rc-badge';
   badge.textContent = confidenceLabel(confidence);
-  overlay.appendChild(badge);
+  label.appendChild(badge);
+  container.appendChild(label);
+  document.body.appendChild(container);
 
-  positionWatermark(overlay, config.position);
-  wrapper.appendChild(overlay);
+  function updatePosition(): void {
+    const rect = media.getBoundingClientRect();
+    container.style.top    = `${rect.top}px`;
+    container.style.left   = `${rect.left}px`;
+    container.style.width  = `${rect.width}px`;
+    container.style.height = `${rect.height}px`;
 
-  if (mode === 'auto-hide') {
-    // Show briefly, then hide; reveal on hover
-    setTimeout(() => {
-      overlay.classList.add('rc-hidden');
-    }, config.animationDuration);
+    const mode = config.mode === 'static' && shouldAutoFallback(rect, config)
+      ? 'flash'
+      : config.mode;
+    label.className = `rc-watermark-label rc-mode-${mode}`;
 
-    wrapper.addEventListener('mouseenter', () => overlay.classList.remove('rc-hidden'));
-    wrapper.addEventListener('mouseleave', () => overlay.classList.add('rc-hidden'));
+    const { alignItems, justifyContent } = flexAlignment(config.position);
+    container.style.alignItems   = alignItems;
+    container.style.justifyContent = justifyContent;
+
+    label.style.fontSize = `${labelFontSize(rect)}px`;
+  }
+
+  updatePosition();
+  _positionUpdaters.add(updatePosition);
+
+  if (config.mode === 'auto-hide') {
+    setTimeout(() => label.classList.add('rc-hidden'), config.animationDuration);
+    // pointer-events:none on the container means we listen on the media element
+    media.addEventListener('mouseenter', () => label.classList.remove('rc-hidden'));
+    media.addEventListener('mouseleave', () => label.classList.add('rc-hidden'));
   }
 
   return {
     remove() {
-      overlay.remove();
-      // Unwrap if we wrapped it
-      if (wrapper.classList.contains('rc-media-wrapper') && wrapper.children.length === 1) {
-        wrapper.parentNode?.insertBefore(media, wrapper);
-        wrapper.remove();
-      }
+      container.remove();
+      _positionUpdaters.delete(updatePosition);
     },
     update(newConfig: WatermarkConfig) {
-      overlay.remove();
+      container.remove();
+      _positionUpdaters.delete(updatePosition);
       applyMediaWatermark(media, confidence, newConfig);
     },
   };
 }
 
 /**
- * Apply a green diagonal dev-mode watermark to an image or video element.
- * Shows "Not AI Generated" to confirm the watermarking pipeline is active
- * during local testing. Visually identical in style to the production mark
- * but green rather than red.
+ * Apply a green diagonal watermark to an image or video element that was
+ * determined to be NOT AI-generated (or inconclusive).
+ *
+ * Green colour distinguishes it from the production red AI watermark.
+ * Same body-level fixed approach as applyMediaWatermark.
  */
-export function applyDevModeWatermark(
+export function applyNotAIWatermark(
   media: HTMLImageElement | HTMLVideoElement,
   config: WatermarkConfig
 ): WatermarkHandle {
   injectStyles();
+  _attachTrackingListeners();
 
-  const wrapper = ensureWrapper(media);
+  const container = document.createElement('div');
+  container.className = 'rc-watermark';
+  container.setAttribute('aria-label', 'Not AI-generated');
+  container.setAttribute('role', 'img');
 
-  const overlay = document.createElement('div');
-  overlay.className = 'rc-watermark rc-dev-mode';
-  overlay.setAttribute('aria-label', 'Dev mode: pipeline active');
-  overlay.setAttribute('role', 'img');
-  overlay.style.setProperty('--rc-opacity', String(config.opacity / 100));
+  const label = document.createElement('div');
+  label.className = 'rc-watermark-label';
+  label.style.setProperty('--rc-opacity', String(config.opacity / 100));
   // Green — clearly distinguishable from the production red
-  overlay.style.color = 'rgba(20, 160, 60, 0.80)';
-  overlay.style.textShadow =
+  label.style.color = 'rgba(20, 160, 60, 0.80)';
+  label.style.textShadow =
     '0 0 8px rgba(255,255,255,0.95), 0 0 14px rgba(255,255,255,0.5), 1px 1px 3px rgba(0,0,0,0.4)';
+  label.textContent = 'Not AI Generated';
 
-  // Font size proportional to image dimensions
-  setDiagonalFontSize(overlay, media, wrapper);
+  container.appendChild(label);
+  document.body.appendChild(container);
 
-  overlay.textContent = 'Not AI Generated';
+  function updatePosition(): void {
+    const rect = media.getBoundingClientRect();
+    container.style.top    = `${rect.top}px`;
+    container.style.left   = `${rect.left}px`;
+    container.style.width  = `${rect.width}px`;
+    container.style.height = `${rect.height}px`;
+    label.style.fontSize   = `${labelFontSize(rect)}px`;
+  }
 
-  const badge = document.createElement('div');
-  badge.className = 'rc-badge';
-  badge.textContent = 'Dev Mode — disable before shipping';
-  overlay.appendChild(badge);
-
-  positionWatermark(overlay, config.position);
-  wrapper.appendChild(overlay);
+  updatePosition();
+  _positionUpdaters.add(updatePosition);
 
   return {
     remove() {
-      overlay.remove();
-      if (wrapper.classList.contains('rc-media-wrapper') && wrapper.children.length === 1) {
-        wrapper.parentNode?.insertBefore(media, wrapper);
-        wrapper.remove();
-      }
+      container.remove();
+      _positionUpdaters.delete(updatePosition);
     },
     update(newConfig: WatermarkConfig) {
-      overlay.remove();
-      applyDevModeWatermark(media, newConfig);
+      container.remove();
+      _positionUpdaters.delete(updatePosition);
+      applyNotAIWatermark(media, newConfig);
     },
   };
 }

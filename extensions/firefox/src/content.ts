@@ -10,13 +10,18 @@ import {
   ExtensionSettings,
   DetectorOptions,
   applyMediaWatermark,
-  applyDevModeWatermark,
+  applyNotAIWatermark,
   applyTextWatermark,
   WatermarkHandle,
 } from '@reality-check/core';
 
 const pipeline = new DetectionPipeline();
-const handles = new WeakMap<Element, WatermarkHandle>();
+/**
+ * Track active watermark handles for elements that have been watermarked.
+ * Map (not WeakMap) so we can iterate and remove all overlays when settings
+ * change (e.g. toggling devMode on/off).
+ */
+const handles = new Map<Element, WatermarkHandle>();
 let currentSettings: ExtensionSettings | null = null;
 
 function getDetectorOptions(settings: ExtensionSettings): DetectorOptions {
@@ -24,6 +29,16 @@ function getDetectorOptions(settings: ExtensionSettings): DetectorOptions {
     remoteEnabled: settings.remoteEnabled,
     detectionQuality: settings.detectionQuality,
     remoteEndpoint: settings.remoteEndpoint || undefined,
+    // Fetch image bytes via the background script, which is not
+    // subject to CORS restrictions, enabling EXIF/C2PA analysis on cross-origin images.
+    fetchBytes: (url: string) =>
+      browser.runtime
+        .sendMessage({ type: 'FETCH_IMAGE_BYTES', payload: url })
+        .then((response: unknown) => {
+          const resp = response as { ok: boolean; dataUrl: string | null } | undefined;
+          return resp?.ok ? (resp.dataUrl ?? null) : null;
+        })
+        .catch(() => null),
   };
 }
 
@@ -37,25 +52,21 @@ function isSiteEnabled(settings: ExtensionSettings): boolean {
 async function processImage(img: HTMLImageElement, settings: ExtensionSettings): Promise<void> {
   if (handles.has(img)) return;
   if (!img.complete || img.naturalWidth < 100 || img.naturalHeight < 100) return;
-  if (settings.devMode) {
-    handles.set(img, applyDevModeWatermark(img, settings.watermark));
-    return;
-  }
   const result = await pipeline.analyzeImage(img, getDetectorOptions(settings));
   if (result.isAIGenerated) {
     handles.set(img, applyMediaWatermark(img, result.confidence, settings.watermark));
+  } else if (settings.devMode) {
+    handles.set(img, applyNotAIWatermark(img, settings.watermark));
   }
 }
 
 async function processVideo(video: HTMLVideoElement, settings: ExtensionSettings): Promise<void> {
   if (handles.has(video)) return;
-  if (settings.devMode) {
-    handles.set(video, applyDevModeWatermark(video, settings.watermark));
-    return;
-  }
   const result = await pipeline.analyzeVideo(video, getDetectorOptions(settings));
   if (result.isAIGenerated) {
     handles.set(video, applyMediaWatermark(video, result.confidence, settings.watermark));
+  } else if (settings.devMode) {
+    handles.set(video, applyNotAIWatermark(video, settings.watermark));
   }
 }
 
@@ -120,6 +131,9 @@ async function init(): Promise<void> {
 browser.runtime.onMessage.addListener((message: { type: string; payload?: unknown }) => {
   if (message.type === 'SETTINGS_UPDATED') {
     currentSettings = message.payload as ExtensionSettings;
+    // Remove all existing watermarks before re-scanning with updated settings.
+    handles.forEach((handle) => handle.remove());
+    handles.clear();
     if (currentSettings && isSiteEnabled(currentSettings)) runScan(currentSettings);
   }
 });
