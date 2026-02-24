@@ -155,8 +155,11 @@ function runScan(settings: ExtensionSettings): void {
   document.querySelectorAll<HTMLVideoElement>('video').forEach((v) =>
     processVideo(v, settings).catch(console.error)
   );
-  // Text scanning disabled — the inline highlights (orange background + ~AI badge)
-  // break website usability on content-heavy sites like Facebook and LinkedIn.
+  if (settings.textScanEnabled) {
+    document
+      .querySelectorAll<HTMLElement>(Array.from(TEXT_TAGS).join(','))
+      .forEach((el) => processTextNode(el, settings).catch(console.error));
+  }
 }
 
 let mutDebounce: ReturnType<typeof setTimeout> | null = null;
@@ -172,12 +175,17 @@ async function init(): Promise<void> {
         const el = entry.target as HTMLElement;
         if (el instanceof HTMLImageElement) processImage(el, currentSettings).catch(console.error);
         else if (el instanceof HTMLVideoElement) processVideo(el, currentSettings).catch(console.error);
+        else if (currentSettings.textScanEnabled && TEXT_TAGS.has(el.tagName)) processTextNode(el, currentSettings).catch(console.error);
       }
     },
     { rootMargin: '200px' }
   );
 
-  const sel = 'img, video';
+  const selParts = ['img', 'video'];
+  if (currentSettings?.textScanEnabled) {
+    selParts.push(...Array.from(TEXT_TAGS).map((t) => t.toLowerCase()));
+  }
+  const sel = selParts.join(', ');
   document.querySelectorAll<HTMLElement>(sel).forEach((el) => observer.observe(el));
 
   new MutationObserver(() => {

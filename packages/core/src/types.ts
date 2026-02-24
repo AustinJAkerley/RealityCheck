@@ -117,6 +117,8 @@ export interface ExtensionSettings {
    * Default: false. Keep this OFF in production.
    */
   devMode: boolean;
+  /** Whether to scan text for AI-generated content. Default: false. */
+  textScanEnabled: boolean;
   watermark: WatermarkConfig;
   siteSettings: Record<string, SiteSettings>;
 }
@@ -137,6 +139,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   remoteEndpoint: '',
   remoteApiKey: '',
   devMode: true,
+  textScanEnabled: false,
   watermark: DEFAULT_WATERMARK_CONFIG,
   siteSettings: {},
 };

@@ -227,8 +227,7 @@ function runScan(settings: ExtensionSettings): void {
   if (!isSiteEnabled(settings)) return;
   scanImages(settings);
   scanVideos(settings);
-  // Text scanning disabled — the inline highlights (orange background + ~AI badge)
-  // break website usability on content-heavy sites like Facebook and LinkedIn.
+  if (settings.textScanEnabled) scanText(settings);
 }
 
 // ── Intersection Observer (viewport-only scanning) ───────────────────────────
@@ -246,6 +245,8 @@ function startObserver(): void {
           processImage(el, currentSettings).catch(console.error);
         } else if (el instanceof HTMLVideoElement) {
           processVideo(el, currentSettings).catch(console.error);
+        } else if (currentSettings.textScanEnabled && TEXT_TAGS.has(el.tagName)) {
+          processTextNode(el, currentSettings).catch(console.error);
         }
       }
     },
@@ -253,7 +254,11 @@ function startObserver(): void {
   );
 
   // Observe existing elements
-  const selector = 'img, video';
+  const selParts = ['img', 'video'];
+  if (currentSettings?.textScanEnabled) {
+    selParts.push(...Array.from(TEXT_TAGS).map((t) => t.toLowerCase()));
+  }
+  const selector = selParts.join(', ');
   document.querySelectorAll<HTMLElement>(selector).forEach((el) => observer!.observe(el));
 }
 
