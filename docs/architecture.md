@@ -35,9 +35,50 @@ RealityCheck is a cross-browser extension that detects likely AI-generated conte
 └────────────────────────────────────────────────────────────────┘
            │ (on by default; user can disable in popup)
            ▼
-  Remote classifier endpoint
-  (RealityCheck hosted Azure proxy — no API key required)
+  ┌─────────────────────────────────────────────────────────┐
+  │  @reality-check/api  (packages/api — Azure-hosted)      │
+  │                                                         │
+  │  POST /v1/classify                                      │
+  │  ├── Bearer-token authentication (CLASSIFY_API_KEY)     │
+  │  ├── CSRF protection (Origin + X-RealityCheck-Request)  │
+  │  ├── Rate limiting (60 req/min per IP)                  │
+  │  └── Image analysis (CDN patterns, dimensions, bytes)   │
+  │                                                         │
+  │  GET  /health  (Azure liveness probe)                   │
+  └─────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Backend API service — `/packages/api`
+
+The `@reality-check/api` package is a Node.js / Express service designed to be
+deployed to Azure App Service or Azure Container Apps.  It exposes the
+`POST /v1/classify` endpoint consumed by the browser extension's
+`GenericHttpAdapter` (see `packages/core/src/adapters/remote-adapter.ts`).
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/classify` | Classify an image (or other content type). Returns `{ score, label }`. |
+| `GET`  | `/health` | Liveness probe for Azure health checks. Returns `{ status: "ok" }`. |
+
+### Security layers
+
+1. **Helmet** — sets secure HTTP response headers (CSP, HSTS, etc.).
+2. **CORS** — only browser-extension origins and origins listed in `ALLOWED_ORIGINS` are permitted for browser-originated requests; server-to-server calls (no `Origin` header) are allowed.
+3. **Bearer-token authentication** — when the `CLASSIFY_API_KEY` environment variable is set, every request must supply `Authorization: Bearer <key>`.  When unset the check is skipped (development mode).
+4. **CSRF protection** — every request to `/v1/*` must include the `X-RealityCheck-Request: 1` header and (if an `Origin` header is present) must originate from a trusted origin.  This makes CSRF attacks impossible even without session cookies.
+5. **Rate limiting** — 60 requests per minute per IP (configurable).
+
+### Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `3000` | TCP port the server listens on. |
+| `CLASSIFY_API_KEY` | _(unset)_ | Shared secret sent as `Authorization: Bearer <key>` by the extension. Set in production to prevent unauthorised access. |
+| `ALLOWED_ORIGINS` | _(unset)_ | Comma-separated list of trusted web origins (in addition to all browser-extension origins). |
 
 ---
 
