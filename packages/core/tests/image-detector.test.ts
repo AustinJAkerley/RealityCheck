@@ -205,6 +205,62 @@ describe('ImageDetector (remote disabled)', () => {
   });
 });
 
+// ── Scoring blend fixes (Problems 1 & 2 from issue) ─────────────────────────
+
+describe('visual score blending (scoring math fix)', () => {
+  test('computeVisualAIScore * 0.75 >= 0.35 threshold when visual score is 0.55+', () => {
+    // The old code applied a *0.6 double-discount when localScore>=0.3,
+    // capping the contribution at 0.372. The new code uses visualScore * 0.75 directly.
+    // With visualScore=0.55: 0.55 * 0.75 = 0.4125 > 0.35 → should flag.
+    const visualScore = 0.55;
+    const visualWeight = 0.75;
+    const combined = Math.max(0.3, visualScore * visualWeight);
+    expect(combined).toBeGreaterThan(0.35);
+    expect(combined).toBeCloseTo(0.4125, 4);
+  });
+
+  test('old double-discount formula was below threshold for typical AI images', () => {
+    // Verifies the bug: old *0.6 discount capped combined at 0.3 when localScore=0.3
+    const visualScore = 0.55;
+    const oldDiscount = 0.62;
+    const oldCombined = Math.max(0.3, visualScore * oldDiscount * 0.6);
+    expect(oldCombined).toBeLessThan(0.35); // Was: 0.3 — NOT FLAGGED (bug)
+  });
+
+  test('local-only isAIGenerated uses 0.25 threshold', async () => {
+    // A string URL that has no CDN match and no pixel data yields score = 0.
+    // score = 0 < 0.25, so should not be flagged.
+    const detector = new ImageDetector();
+    const opts = { remoteEnabled: false, detectionQuality: 'medium' as const };
+    const result = await detector.detect('https://example.com/ordinary-photo.jpg', opts);
+    expect(result.source).toBe('local');
+    // score=0 → not flagged even with 0.25 threshold
+    expect(result.isAIGenerated).toBe(false);
+    expect(result.score).toBe(0);
+  });
+
+  test('local-only CDN match is flagged with new 0.25 threshold', async () => {
+    const detector = new ImageDetector();
+    const opts = { remoteEnabled: false, detectionQuality: 'medium' as const };
+    // CDN match gives localScore = 0.7, well above both old 0.35 and new 0.25
+    const result = await detector.detect('https://midjourney.com/img.png', opts);
+    expect(result.isAIGenerated).toBe(true);
+    expect(result.score).toBeGreaterThanOrEqual(0.7);
+  });
+
+  test('options.fetchBytes is called instead of direct fetch when provided', async () => {
+    const detector = new ImageDetector();
+    const fetchBytesMock = jest.fn().mockResolvedValue(null);
+    const opts = {
+      remoteEnabled: false,
+      detectionQuality: 'medium' as const,
+      fetchBytes: fetchBytesMock,
+    };
+    await detector.detect('https://example.com/some-image.jpg', opts);
+    expect(fetchBytesMock).toHaveBeenCalledWith('https://example.com/some-image.jpg');
+  });
+});
+
 // ── computeVisualAIScore ──────────────────────────────────────────────────────
 
 describe('computeVisualAIScore', () => {

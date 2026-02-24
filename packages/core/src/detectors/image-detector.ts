@@ -551,33 +551,39 @@ export class ImageDetector implements Detector {
     let combinedLocalScore = localScore;
     if (pixelData && quality !== 'low') {
       const visualScore = computeVisualAIScore(pixelData, PREFILTER_SIZE, PREFILTER_SIZE);
-      // When CDN/dimension evidence is weak, let visual score drive the result
-      // (discounted slightly to stay conservative on false positives).
-      // When CDN evidence is strong, visual score provides an additional floor.
-      const discount = quality === 'high' ? 0.75 : 0.62;
-      combinedLocalScore =
-        localScore >= 0.3
-          ? Math.max(localScore, visualScore * discount * 0.6)
-          : Math.max(localScore, visualScore * discount);
+      // Give visual pixel analysis equal standing with URL/dimension heuristics.
+      // Take the higher of the URL/dimension score or the visual score (after discount).
+      // The previous *0.6 double-discount when localScore>=0.3 made visual analysis
+      // nearly irrelevant for the most common case (re-uploaded AI images with some
+      // dimension match but no CDN URL match). Removed that double-discount.
+      const visualWeight = quality === 'high' ? 0.85 : 0.75;
+      combinedLocalScore = Math.max(localScore, visualScore * visualWeight);
     }
 
     // ── Step 2c: EXIF metadata analysis ──────────────────────────────────────
     // EXIF and C2PA metadata reside in the original image binary.
-    // Canvas re-encoding strips all metadata, so we fetch the original bytes
-    // via the image src URL (succeeds for same-origin and CORS-enabled images;
-    // fails silently for cross-origin/opaque responses).
+    // Canvas re-encoding strips all metadata. Direct fetch() from a content
+    // script hits CORS restrictions for cross-origin images.
+    // When options.fetchBytes is provided (e.g. via a background service worker
+    // that is not CORS-restricted), use it. Otherwise fall back to direct fetch.
     let metadataDataUrl: string | null = null;
     if (src && /^https?:\/\//.test(src)) {
       try {
-        const resp = await fetch(src, { cache: 'force-cache' });
-        if (resp.ok) {
-          const blob = await resp.blob();
-          metadataDataUrl = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = () => reject(reader.error);
-            reader.readAsDataURL(blob);
-          });
+        if (options.fetchBytes) {
+          // Extension-provided fetch: bypasses CORS (background SW context)
+          metadataDataUrl = await options.fetchBytes(src);
+        } else {
+          // Direct fetch: only works for same-origin / CORS-enabled images
+          const resp = await fetch(src, { cache: 'force-cache' });
+          if (resp.ok) {
+            const blob = await resp.blob();
+            metadataDataUrl = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result as string);
+              reader.onerror = () => reject(reader.error);
+              reader.readAsDataURL(blob);
+            });
+          }
         }
       } catch {
         // CORS block, network error, or unsupported environment — skip
@@ -632,9 +638,14 @@ export class ImageDetector implements Detector {
       }
     }
 
+    // Use a lower threshold for local-only results: heuristics alone are weaker
+    // than the remote classifier, so a lower bar catches more AI images while
+    // accepting some false positives. The remote classifier (when enabled) uses
+    // a calibrated 0.35 threshold against the blended remote+local score.
+    const aiThreshold = source === 'local' ? 0.25 : 0.35;
     const result: DetectionResult = {
       contentType: 'image',
-      isAIGenerated: finalScore >= 0.35,
+      isAIGenerated: finalScore >= aiThreshold,
       confidence: scoreToConfidence(finalScore),
       score: finalScore,
       source,

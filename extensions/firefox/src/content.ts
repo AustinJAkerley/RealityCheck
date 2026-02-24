@@ -24,6 +24,16 @@ function getDetectorOptions(settings: ExtensionSettings): DetectorOptions {
     remoteEnabled: settings.remoteEnabled,
     detectionQuality: settings.detectionQuality,
     remoteEndpoint: settings.remoteEndpoint || undefined,
+    // Fetch image bytes via the background script, which is not
+    // subject to CORS restrictions, enabling EXIF/C2PA analysis on cross-origin images.
+    fetchBytes: (url: string) =>
+      browser.runtime
+        .sendMessage({ type: 'FETCH_IMAGE_BYTES', payload: url })
+        .then((response: unknown) => {
+          const resp = response as { ok: boolean; dataUrl: string | null } | undefined;
+          return resp?.ok ? (resp.dataUrl ?? null) : null;
+        })
+        .catch(() => null),
   };
 }
 

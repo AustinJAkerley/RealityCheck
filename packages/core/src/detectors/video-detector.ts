@@ -239,10 +239,11 @@ export class VideoDetector implements Detector {
         videoVisualScore = analysis.visualScore;
         capturedFrames = analysis.frames;
 
-        // Blend temporal and visual signals into local score
-        // (capped to avoid over-penalising normal static scenes)
+        // Blend temporal and visual signals into local score.
+        // Visual boost increased from 0.2 to 0.35 to give pixel analysis
+        // meaningful weight when there is no URL match.
         const temporalBoost = Math.min(0.3, temporalScore);
-        const visualBoost = videoVisualScore * 0.2;
+        const visualBoost = videoVisualScore * 0.35;
         finalScore = Math.min(1, localScore + temporalBoost + visualBoost);
       } catch {
         // Frame analysis failed — continue with URL score only
@@ -275,9 +276,11 @@ export class VideoDetector implements Detector {
       }
     }
 
+    // Use a lower threshold for local-only results (same rationale as image detector).
+    const aiThreshold = source === 'local' ? 0.25 : 0.35;
     const result: DetectionResult = {
       contentType: 'video',
-      isAIGenerated: finalScore >= 0.35,
+      isAIGenerated: finalScore >= aiThreshold,
       confidence: scoreToConfidence(finalScore),
       score: finalScore,
       source,

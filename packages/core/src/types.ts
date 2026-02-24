@@ -61,6 +61,23 @@ export interface DetectorOptions {
    * Only needed for advanced/development use.
    */
   remoteEndpoint?: string;
+  /**
+   * Optional callback to fetch raw image bytes as a base64 data URL.
+   *
+   * Direct `fetch()` from a content script is subject to CORS restrictions,
+   * meaning EXIF and C2PA metadata analysis silently fails for cross-origin images.
+   * Providing this callback (e.g. via a browser-extension background service worker
+   * that is not CORS-restricted) allows the detector to read the original image binary.
+   *
+   * Example (Chrome extension content script):
+   * ```ts
+   * fetchBytes: (url) => new Promise((resolve) => {
+   *   chrome.runtime.sendMessage({ type: 'FETCH_IMAGE_BYTES', payload: url },
+   *     (resp) => resolve(resp?.ok ? resp.dataUrl : null));
+   * })
+   * ```
+   */
+  fetchBytes?: (url: string) => Promise<string | null>;
 }
 
 export interface WatermarkConfig {
