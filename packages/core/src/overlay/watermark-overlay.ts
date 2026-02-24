@@ -63,7 +63,8 @@ const CSS_TEMPLATE = `
   border: none;
   padding: 0;
   opacity: var(--rc-opacity);
-  white-space: nowrap;
+  white-space: normal;
+  text-align: center;
   transform: rotate(-40deg);
 }
 .rc-watermark-label.rc-mode-flash {
@@ -137,9 +138,9 @@ function _attachTrackingListeners(): void {
 
 function confidenceLabel(confidence: ConfidenceLevel): string {
   const map: Record<ConfidenceLevel, string> = {
-    low: 'Low confidence',
-    medium: 'Medium confidence',
-    high: 'High confidence',
+    low: 'Low Confidence',
+    medium: 'Medium Confidence',
+    high: 'High Confidence',
   };
   return map[confidence];
 }
@@ -215,17 +216,34 @@ export function applyMediaWatermark(
   // Inner label — the diagonal text
   const label = document.createElement('div');
   label.style.setProperty('--rc-opacity', String(config.opacity / 100));
-  label.textContent = 'Likely AI-Generated';
+  label.textContent = 'Likely AI Generated';
 
+  const mediaType = media instanceof HTMLVideoElement ? 'Video' : 'Photo';
   const badge = document.createElement('div');
   badge.className = 'rc-badge';
-  badge.textContent = confidenceLabel(confidence);
+  badge.textContent = `${mediaType} ${confidenceLabel(confidence)}`;
   label.appendChild(badge);
   container.appendChild(label);
   document.body.appendChild(container);
 
   function updatePosition(): void {
+    // Auto-remove overlay when the media element has been removed from the DOM
+    // (e.g. SPA navigation) or is no longer visible (hidden/collapsed).
+    if (!media.isConnected) {
+      container.remove();
+      _positionUpdaters.delete(updatePosition);
+      return;
+    }
+
     const rect = media.getBoundingClientRect();
+
+    // Hide overlay when the element has zero dimensions (e.g. display:none)
+    if (rect.width === 0 && rect.height === 0) {
+      container.style.display = 'none';
+      return;
+    }
+    container.style.display = '';
+
     container.style.top    = `${rect.top}px`;
     container.style.left   = `${rect.left}px`;
     container.style.width  = `${rect.width}px`;
@@ -292,13 +310,35 @@ export function applyNotAIWatermark(
   label.style.color = 'rgba(20, 160, 60, 0.80)';
   label.style.textShadow =
     '0 0 8px rgba(255,255,255,0.95), 0 0 14px rgba(255,255,255,0.5), 1px 1px 3px rgba(0,0,0,0.4)';
-  label.textContent = 'Not AI Generated';
+  label.textContent = 'Not Likely AI Generated';
+
+  const mediaType = media instanceof HTMLVideoElement ? 'Video' : 'Photo';
+  const typeBadge = document.createElement('div');
+  typeBadge.className = 'rc-badge';
+  typeBadge.textContent = mediaType;
+  label.appendChild(typeBadge);
 
   container.appendChild(label);
   document.body.appendChild(container);
 
   function updatePosition(): void {
+    // Auto-remove overlay when the media element has been removed from the DOM
+    // (e.g. SPA navigation) or is no longer visible (hidden/collapsed).
+    if (!media.isConnected) {
+      container.remove();
+      _positionUpdaters.delete(updatePosition);
+      return;
+    }
+
     const rect = media.getBoundingClientRect();
+
+    // Hide overlay when the element has zero dimensions (e.g. display:none)
+    if (rect.width === 0 && rect.height === 0) {
+      container.style.display = 'none';
+      return;
+    }
+    container.style.display = '';
+
     container.style.top    = `${rect.top}px`;
     container.style.left   = `${rect.left}px`;
     container.style.width  = `${rect.width}px`;
