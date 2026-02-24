@@ -53,6 +53,8 @@ async function processImage(img: HTMLImageElement, settings: ExtensionSettings):
   if (handles.has(img)) return;
   if (!img.complete || img.naturalWidth < 100 || img.naturalHeight < 100) return;
   const result = await pipeline.analyzeImage(img, getDetectorOptions(settings));
+  // Guard again after await: a concurrent call may have already watermarked this element.
+  if (handles.has(img)) return;
   if (result.isAIGenerated) {
     handles.set(img, applyMediaWatermark(img, result.confidence, settings.watermark));
   } else if (settings.devMode) {
@@ -63,6 +65,8 @@ async function processImage(img: HTMLImageElement, settings: ExtensionSettings):
 async function processVideo(video: HTMLVideoElement, settings: ExtensionSettings): Promise<void> {
   if (handles.has(video)) return;
   const result = await pipeline.analyzeVideo(video, getDetectorOptions(settings));
+  // Guard again after await: a concurrent call may have already watermarked this element.
+  if (handles.has(video)) return;
   if (result.isAIGenerated) {
     handles.set(video, applyMediaWatermark(video, result.confidence, settings.watermark));
   } else if (settings.devMode) {
@@ -78,6 +82,8 @@ async function processTextNode(el: HTMLElement, settings: ExtensionSettings): Pr
   const text = el.innerText?.trim() ?? '';
   if (text.length < MIN_TEXT_LENGTH || el.children.length > 10) return;
   const result = await pipeline.analyzeText(text, getDetectorOptions(settings));
+  // Guard again after await: a concurrent call may have already watermarked this element.
+  if (handles.has(el)) return;
   if (result.isAIGenerated) {
     handles.set(el, applyTextWatermark(el, result.confidence, settings.watermark));
   }

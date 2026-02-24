@@ -74,6 +74,9 @@ async function processImage(img: HTMLImageElement, settings: ExtensionSettings):
   const opts = getDetectorOptions(settings);
   const result = await pipeline.analyzeImage(img, opts);
 
+  // Guard again after await: a concurrent call may have already watermarked this element.
+  if (handles.has(img)) return;
+
   if (result.isAIGenerated) {
     const handle = applyMediaWatermark(img, result.confidence, settings.watermark);
     handles.set(img, handle);
@@ -87,6 +90,9 @@ async function processVideo(video: HTMLVideoElement, settings: ExtensionSettings
 
   const opts = getDetectorOptions(settings);
   const result = await pipeline.analyzeVideo(video, opts);
+
+  // Guard again after await: a concurrent call may have already watermarked this element.
+  if (handles.has(video)) return;
 
   if (result.isAIGenerated) {
     const handle = applyMediaWatermark(video, result.confidence, settings.watermark);
@@ -111,6 +117,9 @@ async function processTextNode(el: HTMLElement, settings: ExtensionSettings): Pr
 
   const opts = getDetectorOptions(settings);
   const result = await pipeline.analyzeText(text, opts);
+
+  // Guard again after await: a concurrent call may have already watermarked this element.
+  if (handles.has(el)) return;
 
   if (result.isAIGenerated) {
     const handle = applyTextWatermark(el, result.confidence, settings.watermark);
