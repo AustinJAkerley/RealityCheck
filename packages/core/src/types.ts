@@ -132,11 +132,11 @@ export const DEFAULT_WATERMARK_CONFIG: WatermarkConfig = {
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
   globalEnabled: true,
-  remoteEnabled: true,
-  detectionQuality: 'medium',
+  remoteEnabled: false,
+  detectionQuality: 'high',
   remoteEndpoint: '',
   remoteApiKey: '',
-  devMode: false,
+  devMode: true,
   watermark: DEFAULT_WATERMARK_CONFIG,
   siteSettings: {},
 };
