@@ -16,7 +16,7 @@ import {
   ExtensionSettings,
   DetectorOptions,
   applyMediaWatermark,
-  applyDevModeWatermark,
+  applyNotAIWatermark,
   applyTextWatermark,
   WatermarkHandle,
 } from '@reality-check/core';
@@ -71,27 +71,19 @@ async function processImage(img: HTMLImageElement, settings: ExtensionSettings):
   if (handles.has(img)) return;
   if (!img.complete || img.naturalWidth < 100 || img.naturalHeight < 100) return;
 
-  if (settings.devMode) {
-    handles.set(img, applyDevModeWatermark(img, settings.watermark));
-    return;
-  }
-
   const opts = getDetectorOptions(settings);
   const result = await pipeline.analyzeImage(img, opts);
 
   if (result.isAIGenerated) {
     const handle = applyMediaWatermark(img, result.confidence, settings.watermark);
     handles.set(img, handle);
+  } else if (settings.devMode) {
+    handles.set(img, applyNotAIWatermark(img, settings.watermark));
   }
 }
 
 async function processVideo(video: HTMLVideoElement, settings: ExtensionSettings): Promise<void> {
   if (handles.has(video)) return;
-
-  if (settings.devMode) {
-    handles.set(video, applyDevModeWatermark(video, settings.watermark));
-    return;
-  }
 
   const opts = getDetectorOptions(settings);
   const result = await pipeline.analyzeVideo(video, opts);
@@ -99,6 +91,8 @@ async function processVideo(video: HTMLVideoElement, settings: ExtensionSettings
   if (result.isAIGenerated) {
     const handle = applyMediaWatermark(video, result.confidence, settings.watermark);
     handles.set(video, handle);
+  } else if (settings.devMode) {
+    handles.set(video, applyNotAIWatermark(video, settings.watermark));
   }
 }
 

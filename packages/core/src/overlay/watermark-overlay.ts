@@ -267,13 +267,13 @@ export function applyMediaWatermark(
 }
 
 /**
- * Apply a green diagonal dev-mode watermark to an image or video element.
+ * Apply a green diagonal watermark to an image or video element that was
+ * determined to be NOT AI-generated (or inconclusive).
  *
- * Shows "DEV MODE — Pipeline Active" to confirm the watermarking pipeline is
- * working during local testing. Green colour distinguishes it from the
- * production red watermark. Same body-level fixed approach as applyMediaWatermark.
+ * Green colour distinguishes it from the production red AI watermark.
+ * Same body-level fixed approach as applyMediaWatermark.
  */
-export function applyDevModeWatermark(
+export function applyNotAIWatermark(
   media: HTMLImageElement | HTMLVideoElement,
   config: WatermarkConfig
 ): WatermarkHandle {
@@ -282,22 +282,18 @@ export function applyDevModeWatermark(
 
   const container = document.createElement('div');
   container.className = 'rc-watermark';
-  container.setAttribute('aria-label', 'Dev mode: pipeline active');
+  container.setAttribute('aria-label', 'Not AI-generated');
   container.setAttribute('role', 'img');
 
   const label = document.createElement('div');
-  label.className = 'rc-watermark-label rc-dev-mode';
+  label.className = 'rc-watermark-label';
   label.style.setProperty('--rc-opacity', String(config.opacity / 100));
   // Green — clearly distinguishable from the production red
   label.style.color = 'rgba(20, 160, 60, 0.80)';
   label.style.textShadow =
     '0 0 8px rgba(255,255,255,0.95), 0 0 14px rgba(255,255,255,0.5), 1px 1px 3px rgba(0,0,0,0.4)';
-  label.textContent = 'DEV MODE — Pipeline Active';
+  label.textContent = 'Not AI Generated';
 
-  const badge = document.createElement('div');
-  badge.className = 'rc-badge';
-  badge.textContent = 'Disable before shipping';
-  label.appendChild(badge);
   container.appendChild(label);
   document.body.appendChild(container);
 
@@ -321,7 +317,7 @@ export function applyDevModeWatermark(
     update(newConfig: WatermarkConfig) {
       container.remove();
       _positionUpdaters.delete(updatePosition);
-      applyDevModeWatermark(media, newConfig);
+      applyNotAIWatermark(media, newConfig);
     },
   };
 }
