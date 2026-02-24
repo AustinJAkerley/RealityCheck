@@ -16,7 +16,12 @@ import {
 } from '@reality-check/core';
 
 const pipeline = new DetectionPipeline();
-const handles = new WeakMap<Element, WatermarkHandle>();
+/**
+ * Track active watermark handles for elements that have been watermarked.
+ * Map (not WeakMap) so we can iterate and remove all overlays when settings
+ * change (e.g. toggling devMode on/off).
+ */
+const handles = new Map<Element, WatermarkHandle>();
 let currentSettings: ExtensionSettings | null = null;
 
 function getDetectorOptions(settings: ExtensionSettings): DetectorOptions {
@@ -130,6 +135,9 @@ async function init(): Promise<void> {
 browser.runtime.onMessage.addListener((message: { type: string; payload?: unknown }) => {
   if (message.type === 'SETTINGS_UPDATED') {
     currentSettings = message.payload as ExtensionSettings;
+    // Remove all existing watermarks before re-scanning with updated settings.
+    handles.forEach((handle) => handle.remove());
+    handles.clear();
     if (currentSettings && isSiteEnabled(currentSettings)) runScan(currentSettings);
   }
 });

@@ -294,6 +294,30 @@ describe('computeVisualAIScore', () => {
     expect(score).toBeGreaterThanOrEqual(0);
     expect(score).toBeLessThanOrEqual(1);
   });
+
+  test('does not flag a neutral grey image as AI (false positive regression)', () => {
+    // Grey (128,128,128): uniformSatScore=0 (no saturation), channelUniformity=1,
+    // lumScore≈1 (mean lum ≈ 0.50). With the old 0.30 channelUniformity weight
+    // this scored ~0.499 × 0.75 = 0.37 > 0.25 threshold — a false positive.
+    // With the revised 0.10 channelUniformity weight the combined score is
+    // 0*0.70 + 1*0.10 + 1*0.20 = 0.30; 0.30 * 0.75 = 0.225 < 0.25 → NOT flagged.
+    const grey = solidColorPixels(SIZE, 128, 128, 128);
+    const visualScore = computeVisualAIScore(grey, SIZE, SIZE);
+    const visualWeight = 0.75; // medium quality weight
+    expect(visualScore * visualWeight).toBeLessThan(0.25);
+  });
+
+  test('still flags a typical AI portrait-like image', () => {
+    // Uniform vivid orange: high saturation, near-zero variance → high uniformSatScore.
+    // uniformSatScore=1 * 0.70 = 0.70 → visualScore*0.75 = ~0.73 >> 0.25 threshold.
+    const vivid = new Uint8ClampedArray(SIZE * SIZE * 4);
+    for (let i = 0; i < vivid.length; i += 4) {
+      vivid[i] = 220; vivid[i + 1] = 120; vivid[i + 2] = 60; vivid[i + 3] = 255;
+    }
+    const visualScore = computeVisualAIScore(vivid, SIZE, SIZE);
+    const visualWeight = 0.75;
+    expect(visualScore * visualWeight).toBeGreaterThan(0.25);
+  });
 });
 
 // ── ML model registry ─────────────────────────────────────────────────────────

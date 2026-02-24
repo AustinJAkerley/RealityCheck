@@ -219,14 +219,18 @@ export function computeSaturationVariance(data: Uint8ClampedArray): number {
  *  1. **Uniform-saturation score** — AI images have high mean saturation
  *     with LOW variance (consistent colour richness). Vivid real photos have
  *     high mean saturation but HIGH variance (vivid areas alongside shadows).
+ *     **Primary signal (weight 0.70)** — the most discriminative single feature.
  *
  *  2. **Channel-variance uniformity** — AI generators produce no lens
  *     chromatic aberration, so R/G/B channels have similar variance.
  *     Real photos show channel-specific variance differences.
+ *     **Minor signal (weight 0.10)** — fires for most JPEG images regardless
+ *     of origin, so it is given low weight to avoid false positives.
  *
  *  3. **Luminance balance** — AI images are typically well-exposed
  *     (mean luminance near 0.50). Very dark or very bright images are
  *     more likely to be real photographs taken in challenging conditions.
+ *     **Secondary signal (weight 0.20)** — useful corroborating evidence.
  *
  * Returns 0–1; higher = more likely AI-generated.
  * Expected accuracy: ~50–60% on typical AI image sets (local heuristics only).
@@ -299,7 +303,7 @@ export function computeVisualAIScore(
   // Peaks at 0.50, falls off for dark (<0.30) or bright (>0.70) images
   const lumScore = Math.max(0, 1 - Math.abs(meanLum - 0.50) * 3.2);
 
-  return uniformSatScore * 0.50 + channelUniformityScore * 0.30 + lumScore * 0.20;
+  return uniformSatScore * 0.70 + channelUniformityScore * 0.10 + lumScore * 0.20;
 }
 
 // ── Pre-filter scoring ───────────────────────────────────────────────────────

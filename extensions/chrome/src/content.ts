@@ -23,8 +23,12 @@ import {
 
 const pipeline = new DetectionPipeline();
 
-/** Track watermark handles so we can remove them if settings change */
-const handles = new WeakMap<Element, WatermarkHandle>();
+/**
+ * Track active watermark handles for elements that have been watermarked.
+ * Map (not WeakMap) so we can iterate and remove all overlays when settings
+ * change (e.g. toggling devMode on/off).
+ */
+const handles = new Map<Element, WatermarkHandle>();
 
 let currentSettings: ExtensionSettings | null = null;
 
@@ -151,19 +155,19 @@ function runScan(settings: ExtensionSettings): void {
 
 let observer: IntersectionObserver | null = null;
 
-function startObserver(settings: ExtensionSettings): void {
+function startObserver(): void {
   observer?.disconnect();
   observer = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
+        if (!entry.isIntersecting || !currentSettings) continue;
         const el = entry.target as HTMLElement;
         if (el instanceof HTMLImageElement) {
-          processImage(el, settings).catch(console.error);
+          processImage(el, currentSettings).catch(console.error);
         } else if (el instanceof HTMLVideoElement) {
-          processVideo(el, settings).catch(console.error);
+          processVideo(el, currentSettings).catch(console.error);
         } else if (TEXT_TAGS.has(el.tagName)) {
-          processTextNode(el, settings).catch(console.error);
+          processTextNode(el, currentSettings).catch(console.error);
         }
       }
     },
@@ -198,7 +202,7 @@ async function init(): Promise<void> {
   >({ type: 'GET_SETTINGS' });
 
   currentSettings = settings;
-  startObserver(settings);
+  startObserver();
   startMutationObserver(settings);
   runScan(settings);
 }
@@ -208,7 +212,12 @@ chrome.runtime.onMessage.addListener(
   (message: { type: string; payload?: unknown }) => {
     if (message.type === 'SETTINGS_UPDATED') {
       currentSettings = message.payload as ExtensionSettings;
-      // Re-run scan with new settings
+      // Remove all existing watermarks before re-scanning with updated settings.
+      // Without this, elements that were watermarked (e.g. flagged as AI) would
+      // be skipped on the next scan and never receive the new watermark style
+      // (e.g. toggling devMode on/off would have no effect on them).
+      handles.forEach((handle) => handle.remove());
+      handles.clear();
       if (isSiteEnabled(currentSettings)) {
         runScan(currentSettings);
       }
