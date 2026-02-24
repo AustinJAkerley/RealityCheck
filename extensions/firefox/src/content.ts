@@ -22,6 +22,13 @@ const pipeline = new DetectionPipeline();
  * change (e.g. toggling devMode on/off).
  */
 const handles = new Map<Element, WatermarkHandle>();
+/**
+ * Elements currently being analysed. Guards against concurrent calls to the
+ * same element (e.g. from runScan() and IntersectionObserver firing at the
+ * same time) interleaving their async work — particularly the video frame
+ * seeks inside analyzeVideoFrames, which corrupt each other when interleaved.
+ */
+const processing = new Set<Element>();
 let currentSettings: ExtensionSettings | null = null;
 
 function getDetectorOptions(settings: ExtensionSettings): DetectorOptions {
@@ -50,27 +57,37 @@ function isSiteEnabled(settings: ExtensionSettings): boolean {
 }
 
 async function processImage(img: HTMLImageElement, settings: ExtensionSettings): Promise<void> {
-  if (handles.has(img)) return;
+  if (handles.has(img) || processing.has(img)) return;
   if (!img.complete || img.naturalWidth < 100 || img.naturalHeight < 100) return;
-  const result = await pipeline.analyzeImage(img, getDetectorOptions(settings));
-  // Guard again after await: a concurrent call may have already watermarked this element.
-  if (handles.has(img)) return;
-  if (result.isAIGenerated) {
-    handles.set(img, applyMediaWatermark(img, result.confidence, settings.watermark));
-  } else if (settings.devMode) {
-    handles.set(img, applyNotAIWatermark(img, settings.watermark));
+  processing.add(img);
+  try {
+    const result = await pipeline.analyzeImage(img, getDetectorOptions(settings));
+    // Guard again after await: a concurrent call may have already watermarked this element.
+    if (handles.has(img)) return;
+    if (result.isAIGenerated) {
+      handles.set(img, applyMediaWatermark(img, result.confidence, settings.watermark));
+    } else if (settings.devMode) {
+      handles.set(img, applyNotAIWatermark(img, settings.watermark));
+    }
+  } finally {
+    processing.delete(img);
   }
 }
 
 async function processVideo(video: HTMLVideoElement, settings: ExtensionSettings): Promise<void> {
-  if (handles.has(video)) return;
-  const result = await pipeline.analyzeVideo(video, getDetectorOptions(settings));
-  // Guard again after await: a concurrent call may have already watermarked this element.
-  if (handles.has(video)) return;
-  if (result.isAIGenerated) {
-    handles.set(video, applyMediaWatermark(video, result.confidence, settings.watermark));
-  } else if (settings.devMode) {
-    handles.set(video, applyNotAIWatermark(video, settings.watermark));
+  if (handles.has(video) || processing.has(video)) return;
+  processing.add(video);
+  try {
+    const result = await pipeline.analyzeVideo(video, getDetectorOptions(settings));
+    // Guard again after await: a concurrent call may have already watermarked this element.
+    if (handles.has(video)) return;
+    if (result.isAIGenerated) {
+      handles.set(video, applyMediaWatermark(video, result.confidence, settings.watermark));
+    } else if (settings.devMode) {
+      handles.set(video, applyNotAIWatermark(video, settings.watermark));
+    }
+  } finally {
+    processing.delete(video);
   }
 }
 
@@ -78,14 +95,19 @@ const MIN_TEXT_LENGTH = 150;
 const TEXT_TAGS = new Set(['P', 'ARTICLE', 'SECTION', 'BLOCKQUOTE', 'DIV', 'SPAN', 'LI']);
 
 async function processTextNode(el: HTMLElement, settings: ExtensionSettings): Promise<void> {
-  if (handles.has(el)) return;
+  if (handles.has(el) || processing.has(el)) return;
   const text = el.innerText?.trim() ?? '';
   if (text.length < MIN_TEXT_LENGTH || el.children.length > 10) return;
-  const result = await pipeline.analyzeText(text, getDetectorOptions(settings));
-  // Guard again after await: a concurrent call may have already watermarked this element.
-  if (handles.has(el)) return;
-  if (result.isAIGenerated) {
-    handles.set(el, applyTextWatermark(el, result.confidence, settings.watermark));
+  processing.add(el);
+  try {
+    const result = await pipeline.analyzeText(text, getDetectorOptions(settings));
+    // Guard again after await: a concurrent call may have already watermarked this element.
+    if (handles.has(el)) return;
+    if (result.isAIGenerated) {
+      handles.set(el, applyTextWatermark(el, result.confidence, settings.watermark));
+    }
+  } finally {
+    processing.delete(el);
   }
 }
 
