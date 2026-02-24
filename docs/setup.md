@@ -88,10 +88,11 @@ npm run build
 
 This builds:
 1. `packages/core/` → `packages/core/dist/` (shared TypeScript library)
-2. `extensions/chrome/` → `extensions/chrome/dist/`
-3. `extensions/edge/` → `extensions/edge/dist/`
-4. `extensions/firefox/` → `extensions/firefox/dist/`
-5. `extensions/safari/` → `extensions/safari/dist/`
+2. `packages/api/` → `packages/api/dist/` (backend API service)
+3. `extensions/chrome/` → `extensions/chrome/dist/`
+4. `extensions/edge/` → `extensions/edge/dist/`
+5. `extensions/firefox/` → `extensions/firefox/dist/`
+6. `extensions/safari/` → `extensions/safari/dist/`
 
 A successful build looks like:
 ```
@@ -200,7 +201,91 @@ When **Remote classification** is off, the popup shows a note recommending Mediu
 
 ---
 
-## 7. Run unit tests
+## 7. Run the API locally (optional)
+
+The backend API service in `packages/api` can be run locally for development and testing. This lets you test the full remote-classification flow without deploying to Azure.
+
+### Build and start the server
+
+```bash
+# Build the API (requires core to be built first)
+make build-api        # Linux/macOS
+# or
+cd packages/api && npm run build   # any platform
+
+# Start the server
+cd packages/api && npm start
+```
+
+The server starts on port 3000 by default:
+```
+[RealityCheck API] Listening on port 3000
+```
+
+### Environment variables
+
+All environment variables are optional for local development:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `3000` | TCP port the server listens on |
+| `CLASSIFY_API_KEY` | _(unset)_ | When unset, authentication is skipped (dev mode). Set to any string to require `Authorization: Bearer <key>` on every request. |
+| `ALLOWED_ORIGINS` | _(unset)_ | Comma-separated list of trusted web origins, in addition to browser-extension origins which are always allowed. |
+
+Example with all variables set:
+```bash
+PORT=8080 CLASSIFY_API_KEY=my-dev-key ALLOWED_ORIGINS=http://localhost:3000 \
+  node packages/api/dist/index.js
+```
+
+### Verify the server is running
+
+```bash
+# Health check (no auth or CSRF headers required)
+curl http://localhost:3000/health
+# → {"status":"ok","service":"reality-check-api"}
+
+# Classify an image (dev mode — no CLASSIFY_API_KEY set)
+curl -X POST http://localhost:3000/v1/classify \
+  -H "Content-Type: application/json" \
+  -H "X-RealityCheck-Request: 1" \
+  -d '{"contentType":"image","imageUrl":"https://images.openai.com/dalle3/test.jpg"}'
+# → {"score":0.7,"label":"ai"}
+
+# Classify with auth enabled (CLASSIFY_API_KEY=my-dev-key)
+curl -X POST http://localhost:3000/v1/classify \
+  -H "Content-Type: application/json" \
+  -H "X-RealityCheck-Request: 1" \
+  -H "Authorization: Bearer my-dev-key" \
+  -d '{"contentType":"image"}'
+# → {"score":0,"label":"human"}
+```
+
+### Point the browser extension at the local API
+
+1. Click the RealityCheck icon → open settings.
+2. Toggle **Remote classification** → **On**.
+3. In the **Advanced** section, set **Remote endpoint** to `http://localhost:3000/v1/classify`.
+4. If you set `CLASSIFY_API_KEY`, enter the same value in the **API key** field.
+5. Browse to a page with images — the extension will now send requests to your local server.
+
+### Run API tests only
+
+```bash
+make test-api         # Linux/macOS
+# or
+cd packages/api && npm test   # any platform
+```
+
+Expected output:
+```
+Test Suites: 4 passed, 4 total
+Tests:       37 passed, 37 total
+```
+
+---
+
+## 8. Run unit tests
 
 ```bash
 # Linux/macOS
@@ -223,18 +308,20 @@ Tests:  50 passed, 50 total
 
 ---
 
-## 8. Available make/script targets
+## 9. Available make/script targets
 
 | `make` target | PowerShell (`build.ps1`) | CMD (`build.bat`) | What it does |
 |---|---|---|---|
 | `make install` | — | — | `npm install` |
-| `make build` | `.\scripts\build.ps1` | `scripts\build.bat all` | Build core + all four extensions |
+| `make build` | `.\scripts\build.ps1` | `scripts\build.bat all` | Build core + API service + all four extensions |
 | `make build-core` | `.\scripts\build.ps1 core` | `scripts\build.bat core` | Build core library only |
+| `make build-api` | — | — | Build API service only |
 | `make build-chrome` | `.\scripts\build.ps1 chrome` | `scripts\build.bat chrome` | Build Chrome extension only |
 | `make build-edge` | `.\scripts\build.ps1 edge` | `scripts\build.bat edge` | Build Edge extension only |
 | `make build-firefox` | `.\scripts\build.ps1 firefox` | `scripts\build.bat firefox` | Build Firefox extension only |
 | `make build-safari` | `.\scripts\build.ps1 safari` | `scripts\build.bat safari` | Build Safari extension only |
-| `make test` | `.\scripts\build.ps1 test` | `scripts\build.bat test` | Run all unit tests |
+| `make test` | `.\scripts\build.ps1 test` | `scripts\build.bat test` | Run all unit tests (core + API) |
+| `make test-api` | — | — | Run API service tests only |
 | `make clean` | `.\scripts\build.ps1 clean` | `scripts\build.bat clean` | Remove all `dist/` folders |
 
 ---

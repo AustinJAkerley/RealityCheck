@@ -26,6 +26,7 @@ export class GenericHttpAdapter implements RemoteAdapter {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'X-RealityCheck-Request': '1',
         ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
       },
       body: JSON.stringify({ contentType, ...payload }),

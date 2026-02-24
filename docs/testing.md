@@ -122,27 +122,27 @@ URL-based heuristics fire when the `<source src>` URL contains known AI video pl
 
 ## Unit tests
 
-Run the core detection pipeline tests from the `packages/core` directory:
+Run the core detection pipeline and API service tests:
 
 ```bash
-# Linux/macOS
+# Linux/macOS — runs both core and API tests
 make test
+
+# API tests only
+make test-api
 
 # Windows
 scripts\build.bat test
 
 # Any platform
 cd packages/core && npm test
+cd packages/api && npm test
 ```
 
 Expected output:
 ```
-PASS tests/utils.test.ts
-PASS tests/text-detector.test.ts
-PASS tests/image-detector.test.ts
-PASS tests/pipeline.test.ts
-
-Tests:  50 passed, 50 total
+Tests:  95 passed, 95 total   (core)
+Tests:  37 passed, 37 total   (API)
 ```
 
 ### Run a specific test file
@@ -158,6 +158,67 @@ npx jest tests/image-detector.test.ts
 cd packages/core
 npx jest --watch
 ```
+
+---
+
+## Testing with the local API
+
+You can run the backend API service locally to test the full remote-classification flow end-to-end without deploying to Azure.
+
+### 1. Start the local API server
+
+```bash
+# Build and start (no env vars needed for dev mode)
+make build-api
+cd packages/api && npm start
+# → [RealityCheck API] Listening on port 3000
+```
+
+### 2. Configure the extension
+
+1. Click the RealityCheck icon → open settings.
+2. Toggle **Remote classification** → **On**.
+3. In **Advanced**, set **Remote endpoint** to `http://localhost:3000/v1/classify`.
+4. Leave **API key** empty (authentication is skipped when `CLASSIFY_API_KEY` is not set).
+
+### 3. Test the classify endpoint directly
+
+```bash
+# Health check
+curl http://localhost:3000/health
+
+# Classify — known AI CDN URL (should return high score)
+curl -X POST http://localhost:3000/v1/classify \
+  -H "Content-Type: application/json" \
+  -H "X-RealityCheck-Request: 1" \
+  -d '{"contentType":"image","imageUrl":"https://cdn.midjourney.com/photo.png"}'
+
+# Classify — no signals (should return low score)
+curl -X POST http://localhost:3000/v1/classify \
+  -H "Content-Type: application/json" \
+  -H "X-RealityCheck-Request: 1" \
+  -d '{"contentType":"image"}'
+```
+
+### 4. Verify CSRF and auth enforcement
+
+```bash
+# Missing X-RealityCheck-Request header → 403
+curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:3000/v1/classify \
+  -H "Content-Type: application/json" \
+  -d '{"contentType":"image"}'
+# → 403
+
+# With CLASSIFY_API_KEY set, missing Authorization → 401
+CLASSIFY_API_KEY=test-key node packages/api/dist/index.js &
+curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:3000/v1/classify \
+  -H "Content-Type: application/json" \
+  -H "X-RealityCheck-Request: 1" \
+  -d '{"contentType":"image"}'
+# → 401
+```
+
+See the [Setup Guide § 7](setup.md#7-run-the-api-locally-optional) for more details on environment variables and configuration.
 
 ---
 
