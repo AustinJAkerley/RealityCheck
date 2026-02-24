@@ -63,7 +63,8 @@ const CSS_TEMPLATE = `
   border: none;
   padding: 0;
   opacity: var(--rc-opacity);
-  white-space: nowrap;
+  white-space: normal;
+  text-align: center;
   transform: rotate(-40deg);
 }
 .rc-watermark-label.rc-mode-flash {
@@ -226,7 +227,23 @@ export function applyMediaWatermark(
   document.body.appendChild(container);
 
   function updatePosition(): void {
+    // Auto-remove overlay when the media element has been removed from the DOM
+    // (e.g. SPA navigation) or is no longer visible (hidden/collapsed).
+    if (!media.isConnected) {
+      container.remove();
+      _positionUpdaters.delete(updatePosition);
+      return;
+    }
+
     const rect = media.getBoundingClientRect();
+
+    // Hide overlay when the element has zero dimensions (e.g. display:none)
+    if (rect.width === 0 && rect.height === 0) {
+      container.style.display = 'none';
+      return;
+    }
+    container.style.display = '';
+
     container.style.top    = `${rect.top}px`;
     container.style.left   = `${rect.left}px`;
     container.style.width  = `${rect.width}px`;
@@ -305,7 +322,23 @@ export function applyNotAIWatermark(
   document.body.appendChild(container);
 
   function updatePosition(): void {
+    // Auto-remove overlay when the media element has been removed from the DOM
+    // (e.g. SPA navigation) or is no longer visible (hidden/collapsed).
+    if (!media.isConnected) {
+      container.remove();
+      _positionUpdaters.delete(updatePosition);
+      return;
+    }
+
     const rect = media.getBoundingClientRect();
+
+    // Hide overlay when the element has zero dimensions (e.g. display:none)
+    if (rect.width === 0 && rect.height === 0) {
+      container.style.display = 'none';
+      return;
+    }
+    container.style.display = '';
+
     container.style.top    = `${rect.top}px`;
     container.style.left   = `${rect.left}px`;
     container.style.width  = `${rect.width}px`;

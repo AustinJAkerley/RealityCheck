@@ -264,6 +264,13 @@ function startMutationObserver(): void {
   const mutObs = new MutationObserver(() => {
     if (mutationDebounce) clearTimeout(mutationDebounce);
     mutationDebounce = setTimeout(() => {
+      // Clean up watermarks for elements no longer in the DOM (SPA navigation, dynamic removal)
+      handles.forEach((handle, el) => {
+        if (!el.isConnected) {
+          handle.remove();
+          handles.delete(el);
+        }
+      });
       if (currentSettings) runScan(currentSettings);
     }, 500);
   });

@@ -185,6 +185,13 @@ async function init(): Promise<void> {
   new MutationObserver(() => {
     if (mutDebounce) clearTimeout(mutDebounce);
     mutDebounce = setTimeout(() => {
+      // Clean up watermarks for elements no longer in the DOM (SPA navigation, dynamic removal)
+      handles.forEach((handle, el) => {
+        if (!el.isConnected) {
+          handle.remove();
+          handles.delete(el);
+        }
+      });
       if (currentSettings) runScan(currentSettings);
     }, 500);
   }).observe(document.body, { childList: true, subtree: true });
