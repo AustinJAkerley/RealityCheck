@@ -215,8 +215,13 @@ export function applyMediaWatermark(
   // Inner label — the diagonal text
   const label = document.createElement('div');
   label.style.setProperty('--rc-opacity', String(config.opacity / 100));
+  label.textContent = 'Likely AI Generated';
+
   const mediaType = media instanceof HTMLVideoElement ? 'Video' : 'Photo';
-  label.textContent = `Likely AI Generated ${mediaType}`;
+  const typeBadge = document.createElement('div');
+  typeBadge.className = 'rc-badge';
+  typeBadge.textContent = mediaType;
+  label.appendChild(typeBadge);
 
   const badge = document.createElement('div');
   badge.className = 'rc-badge';
@@ -293,8 +298,13 @@ export function applyNotAIWatermark(
   label.style.color = 'rgba(20, 160, 60, 0.80)';
   label.style.textShadow =
     '0 0 8px rgba(255,255,255,0.95), 0 0 14px rgba(255,255,255,0.5), 1px 1px 3px rgba(0,0,0,0.4)';
+  label.textContent = 'Not Likely AI Generated';
+
   const mediaType = media instanceof HTMLVideoElement ? 'Video' : 'Photo';
-  label.textContent = `Not Likely AI Generated ${mediaType}`;
+  const typeBadge = document.createElement('div');
+  typeBadge.className = 'rc-badge';
+  typeBadge.textContent = mediaType;
+  label.appendChild(typeBadge);
 
   container.appendChild(label);
   document.body.appendChild(container);
