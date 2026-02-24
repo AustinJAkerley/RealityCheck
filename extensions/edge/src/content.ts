@@ -73,11 +73,61 @@ function isSiteEnabled(settings: ExtensionSettings): boolean {
   return true; // default: enabled
 }
 
+// ── Video thumbnail helpers ──────────────────────────────────────────────────
+
+/**
+ * Check if an image is likely a video thumbnail/poster by looking for a
+ * <video> element in a nearby ancestor that visually overlaps with the image.
+ */
+function isVideoThumbnail(img: HTMLImageElement): boolean {
+  const ir = img.getBoundingClientRect();
+  if (ir.width === 0 || ir.height === 0) return false;
+  let el: Element | null = img.parentElement;
+  for (let i = 0; i < 3 && el; i++) {
+    const video = el.querySelector('video');
+    if (video) {
+      const vr = video.getBoundingClientRect();
+      const overlapX = Math.max(0, Math.min(ir.right, vr.right) - Math.max(ir.left, vr.left));
+      const overlapY = Math.max(0, Math.min(ir.bottom, vr.bottom) - Math.max(ir.top, vr.top));
+      if (overlapX * overlapY > 0.5 * ir.width * ir.height) return true;
+    }
+    el = el.parentElement;
+  }
+  return false;
+}
+
+/**
+ * Remove watermarks from thumbnail images that visually overlap with a video.
+ * Called after a video gets its watermark so the thumbnail's watermark
+ * doesn't show alongside the video's watermark.
+ */
+function removeThumbnailWatermarks(video: HTMLVideoElement): void {
+  const vr = video.getBoundingClientRect();
+  if (vr.width === 0 || vr.height === 0) return;
+  let container: Element | null = video.parentElement;
+  for (let i = 0; i < 3 && container; i++) {
+    container.querySelectorAll<HTMLImageElement>('img').forEach((img) => {
+      const handle = handles.get(img);
+      if (!handle) return;
+      const ir = img.getBoundingClientRect();
+      if (ir.width === 0 || ir.height === 0) return;
+      const overlapX = Math.max(0, Math.min(ir.right, vr.right) - Math.max(ir.left, vr.left));
+      const overlapY = Math.max(0, Math.min(ir.bottom, vr.bottom) - Math.max(ir.top, vr.top));
+      if (overlapX * overlapY > 0.5 * ir.width * ir.height) {
+        handle.remove();
+        handles.delete(img);
+      }
+    });
+    container = container.parentElement;
+  }
+}
+
 // ── Element processors ───────────────────────────────────────────────────────
 
 async function processImage(img: HTMLImageElement, settings: ExtensionSettings): Promise<void> {
   if (handles.has(img) || processing.has(img)) return;
   if (!img.complete || img.naturalWidth < 100 || img.naturalHeight < 100) return;
+  if (isVideoThumbnail(img)) return;
 
   processing.add(img);
   try {
@@ -115,6 +165,11 @@ async function processVideo(video: HTMLVideoElement, settings: ExtensionSettings
     } else if (settings.devMode) {
       handles.set(video, applyNotAIWatermark(video, settings.watermark));
     }
+
+    // Remove watermarks from thumbnail images that visually overlap this video,
+    // preventing the double watermark issue when both a thumbnail <img> and
+    // the <video> element get independently analysed.
+    removeThumbnailWatermarks(video);
   } finally {
     processing.delete(video);
   }
