@@ -169,13 +169,22 @@ pulseFreqEl.addEventListener('change', async () => {
 });
 
 // Advanced
-remoteEndpointEl.addEventListener('change', async () => {
+// Advanced — use 'input' event (not 'change') for text fields so the value
+// is saved as the user types. The 'change' event only fires on blur, which
+// never happens when the popup is closed by clicking outside.
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+function debouncedSave(): void {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => save(), 300);
+}
+
+remoteEndpointEl.addEventListener('input', () => {
   settings = { ...settings, remoteEndpoint: remoteEndpointEl.value.trim() };
-  await save();
+  debouncedSave();
 });
-remoteApiKeyEl.addEventListener('change', async () => {
+remoteApiKeyEl.addEventListener('input', () => {
   settings = { ...settings, remoteApiKey: remoteApiKeyEl.value.trim() };
-  await save();
+  debouncedSave();
 });
 devModeEl.addEventListener('change', async () => {
   settings = { ...settings, devMode: devModeEl.checked };
