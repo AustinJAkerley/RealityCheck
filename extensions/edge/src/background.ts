@@ -7,7 +7,8 @@
  * - Broadcast settings changes to active content scripts
  */
 
-import { SettingsStorage, DEFAULT_SETTINGS, ExtensionSettings } from '@reality-check/core';
+import { SettingsStorage, DEFAULT_SETTINGS, ExtensionSettings, createRemoteAdapter } from '@reality-check/core';
+import type { ContentType, RemotePayload } from '@reality-check/core';
 
 const storage = new SettingsStorage();
 
@@ -78,6 +79,21 @@ chrome.runtime.onMessage.addListener(
         })
         .then((dataUrl) => sendResponse({ ok: true, dataUrl }))
         .catch(() => sendResponse({ ok: false, dataUrl: null }));
+      return true; // async response
+    }
+
+    if (message.type === 'REMOTE_CLASSIFY') {
+      const { endpoint, apiKey, contentType, payload } = message.payload as {
+        endpoint: string;
+        apiKey: string;
+        contentType: ContentType;
+        payload: RemotePayload;
+      };
+      const adapter = createRemoteAdapter(endpoint, apiKey);
+      adapter
+        .classify(contentType, payload)
+        .then((result) => sendResponse({ ok: true, result }))
+        .catch((err: Error) => sendResponse({ ok: false, error: err.message }));
       return true; // async response
     }
 

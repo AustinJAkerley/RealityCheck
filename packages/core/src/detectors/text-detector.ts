@@ -14,7 +14,7 @@
  * These heuristics have known limitations (false positives/negatives).
  * See docs/architecture.md for accuracy discussion and mitigation strategies.
  */
-import { DetectionResult, Detector, DetectorOptions } from '../types.js';
+import { DetectionResult, Detector, DetectorOptions, RemotePayload } from '../types.js';
 import { DEFAULT_REMOTE_ENDPOINT } from '../types.js';
 import { DetectionCache } from '../utils/cache.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
@@ -160,8 +160,11 @@ export class TextDetector implements Detector {
       if (this.rateLimiter.consume()) {
         try {
           const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
-          const adapter = createRemoteAdapter(endpoint, options.remoteApiKey || '');
-          const result = await adapter.classify('text', { text: text.slice(0, 2000) });
+          const apiKey = options.remoteApiKey || '';
+          const payload: RemotePayload = { text: text.slice(0, 2000) };
+          const result = options.remoteClassify
+            ? await options.remoteClassify(endpoint, apiKey, 'text', payload)
+            : await createRemoteAdapter(endpoint, apiKey).classify('text', payload);
           // Blend local + remote scores (weight remote more heavily)
           finalScore = localScore * 0.3 + result.score * 0.7;
           source = 'remote';

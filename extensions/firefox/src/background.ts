@@ -6,7 +6,8 @@
  * browser.* APIs for MV2 compatibility.
  */
 
-import { SettingsStorage, DEFAULT_SETTINGS, ExtensionSettings } from '@reality-check/core';
+import { SettingsStorage, DEFAULT_SETTINGS, ExtensionSettings, createRemoteAdapter } from '@reality-check/core';
+import type { ContentType, RemotePayload } from '@reality-check/core';
 
 const storage = new SettingsStorage();
 
@@ -60,6 +61,20 @@ browser.runtime.onMessage.addListener(
         })
         .then((dataUrl) => ({ ok: true, dataUrl }))
         .catch(() => ({ ok: false, dataUrl: null }));
+    }
+
+    if (message.type === 'REMOTE_CLASSIFY') {
+      const { endpoint, apiKey, contentType, payload } = message.payload as {
+        endpoint: string;
+        apiKey: string;
+        contentType: ContentType;
+        payload: RemotePayload;
+      };
+      const adapter = createRemoteAdapter(endpoint, apiKey);
+      return adapter
+        .classify(contentType, payload)
+        .then((result) => ({ ok: true, result }))
+        .catch((err: Error) => ({ ok: false, error: err.message }));
     }
 
     return undefined;

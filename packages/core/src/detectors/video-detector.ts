@@ -19,7 +19,7 @@
  * - Frame sampling cannot reliably detect all deepfakes.
  * - Multi-frame seeking is asynchronous and may not work on all browsers/codecs.
  */
-import { DetectionResult, Detector, DetectorOptions } from '../types.js';
+import { DetectionResult, Detector, DetectorOptions, RemotePayload } from '../types.js';
 import { DEFAULT_REMOTE_ENDPOINT } from '../types.js';
 import { DetectionCache } from '../utils/cache.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
@@ -262,11 +262,14 @@ export class VideoDetector implements Detector {
           if (frameDataUrl) {
             const imageHash = hashDataUrl(frameDataUrl);
             const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
-            const adapter = createRemoteAdapter(endpoint, options.remoteApiKey || '');
-            const result = await adapter.classify('video', {
+            const apiKey = options.remoteApiKey || '';
+            const payload: RemotePayload = {
               imageHash,
               imageDataUrl: frameDataUrl,
-            });
+            };
+            const result = options.remoteClassify
+              ? await options.remoteClassify(endpoint, apiKey, 'video', payload)
+              : await createRemoteAdapter(endpoint, apiKey).classify('video', payload);
             finalScore = finalScore * 0.3 + result.score * 0.7;
             source = 'remote';
           }

@@ -68,6 +68,26 @@ export interface DetectorOptions {
    */
   remoteApiKey?: string;
   /**
+   * Optional callback to perform remote classification via a CORS-free context.
+   *
+   * Content scripts cannot call external APIs directly due to CORS restrictions.
+   * Providing this callback (e.g. by routing through the extension's background
+   * service worker) allows the detector to perform remote classification without
+   * triggering CORS errors.
+   *
+   * The callback receives the endpoint URL, API key, content type, and payload,
+   * and must return the classification result.
+   *
+   * When omitted, detectors call `createRemoteAdapter` directly (only works in
+   * contexts where CORS is not an issue, e.g. background scripts or Node.js).
+   */
+  remoteClassify?: (
+    endpoint: string,
+    apiKey: string,
+    contentType: ContentType,
+    payload: RemotePayload
+  ) => Promise<RemoteClassificationResult>;
+  /**
    * Optional callback to fetch raw image bytes as a base64 data URL.
    *
    * Direct `fetch()` from a content script is subject to CORS restrictions,

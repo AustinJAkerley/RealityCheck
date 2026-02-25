@@ -19,7 +19,7 @@
  * Known limitations: local heuristics have low accuracy for novel AI models.
  * See docs/architecture.md for details.
  */
-import { DetectionResult, DetectionQuality, DetectorOptions, PhotorealismResult, MlModelRunner } from '../types.js';
+import { DetectionResult, DetectionQuality, DetectorOptions, PhotorealismResult, MlModelRunner, RemotePayload } from '../types.js';
 import { Detector } from '../types.js';
 import { DEFAULT_REMOTE_ENDPOINT } from '../types.js';
 import { DetectionCache } from '../utils/cache.js';
@@ -658,14 +658,20 @@ export class ImageDetector implements Detector {
           const dataUrl = downscaleImage(img);
           const imageHash = hashDataUrl(dataUrl ?? src);
           const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
-          const adapter = createRemoteAdapter(endpoint, options.remoteApiKey || '');
-          const result = await adapter.classify('image', {
+          const apiKey = options.remoteApiKey || '';
+          const payload: RemotePayload = {
             imageHash,
             imageDataUrl: dataUrl ?? undefined,
             // Fall back to the source URL for vision-capable adapters when
             // canvas is unavailable (e.g. cross-origin image, no CORS headers).
             imageUrl: dataUrl ? undefined : src,
-          });
+          };
+          // Use the CORS-free remoteClassify callback if provided (extension
+          // content scripts route through the background service worker);
+          // otherwise call the adapter directly (works in non-CORS contexts).
+          const result = options.remoteClassify
+            ? await options.remoteClassify(endpoint, apiKey, 'image', payload)
+            : await createRemoteAdapter(endpoint, apiKey).classify('image', payload);
           finalScore = combinedLocalScore * 0.3 + result.score * 0.7;
           source = 'remote';
         } catch {

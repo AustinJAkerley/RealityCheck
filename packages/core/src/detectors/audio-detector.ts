@@ -18,7 +18,7 @@
  * - On-device ONNX model trained on mel-spectrogram features of TTS vs. real audio.
  * - ONNX Runtime Web inference against audio samples captured via Web Audio API.
  */
-import { DetectionResult, Detector, DetectorOptions } from '../types.js';
+import { DetectionResult, Detector, DetectorOptions, RemotePayload } from '../types.js';
 import { DEFAULT_REMOTE_ENDPOINT } from '../types.js';
 import { DetectionCache } from '../utils/cache.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
@@ -125,12 +125,13 @@ export class AudioDetector implements Detector {
       if (this.rateLimiter.consume()) {
         try {
           const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
-          const adapter = createRemoteAdapter(endpoint, options.remoteApiKey || '');
+          const apiKey = options.remoteApiKey || '';
           // RemotePayload uses imageHash as a generic content identifier;
           // for audio we send the URL hash as the content fingerprint.
-          const result = await adapter.classify('audio', {
-            imageHash: hashUrl(src),
-          });
+          const payload: RemotePayload = { imageHash: hashUrl(src) };
+          const result = options.remoteClassify
+            ? await options.remoteClassify(endpoint, apiKey, 'audio', payload)
+            : await createRemoteAdapter(endpoint, apiKey).classify('audio', payload);
           finalScore = localScore * 0.3 + result.score * 0.7;
           source = 'remote';
         } catch {
