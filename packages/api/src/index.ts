@@ -17,7 +17,7 @@
  *                              classification is performed by GPT-4o vision instead
  *                              of the built-in heuristic analyser.
  *   AZURE_OPENAI_API_KEY     — Azure OpenAI resource key.
- *   AZURE_OPENAI_DEPLOYMENT  — Model deployment name (default: gpt-4o).
+ *   AZURE_OPENAI_DEPLOYMENT  — Model deployment name (default: gpt-5-1-chat).
  *   AZURE_OPENAI_API_VERSION — Azure OpenAI API version (default: 2024-02-01).
  */
 import { createApp } from './app';

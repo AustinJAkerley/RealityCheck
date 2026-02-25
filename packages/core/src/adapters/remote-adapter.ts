@@ -128,7 +128,7 @@ export class AzureOpenAIAdapter implements RemoteAdapter {
   constructor(
     private readonly apiKey: string,
     baseUrl: string,
-    deployment = 'gpt-4o',
+    deployment = 'gpt-5-1-chat',
     apiVersion = '2024-02-01'
   ) {
     this.baseUrl = baseUrl.replace(/\/$/, '');

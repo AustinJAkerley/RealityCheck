@@ -6,7 +6,7 @@
  *
  *   AZURE_OPENAI_ENDPOINT    — e.g. https://myhackathon.openai.azure.com
  *   AZURE_OPENAI_API_KEY     — Azure OpenAI resource key
- *   AZURE_OPENAI_DEPLOYMENT  — model deployment name (default: gpt-4o)
+ *   AZURE_OPENAI_DEPLOYMENT  — model deployment name (default: gpt-5-1-chat)
  *   AZURE_OPENAI_API_VERSION — API version (default: 2024-02-01)
  *
  * When these variables are not set, the function is a no-op and the caller
@@ -38,7 +38,7 @@ export function getAzureOpenAIConfig(): AzureOpenAIConfig | null {
   return {
     endpoint,
     apiKey,
-    deployment: process.env.AZURE_OPENAI_DEPLOYMENT?.trim() || 'gpt-4o',
+    deployment: process.env.AZURE_OPENAI_DEPLOYMENT?.trim() || 'gpt-5-1-chat',
     apiVersion: process.env.AZURE_OPENAI_API_VERSION?.trim() || '2024-02-01',
   };
 }

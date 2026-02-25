@@ -40,7 +40,7 @@ describe('getAzureOpenAIConfig', () => {
     expect(config).not.toBeNull();
     expect(config!.endpoint).toBe('https://test.openai.azure.com');
     expect(config!.apiKey).toBe('mykey');
-    expect(config!.deployment).toBe('gpt-4o');
+    expect(config!.deployment).toBe('gpt-5-1-chat');
     expect(config!.apiVersion).toBe('2024-02-01');
   });
 
@@ -59,7 +59,7 @@ describe('classifyImageWithAzureOpenAI', () => {
   const mockConfig: AzureOpenAIConfig = {
     endpoint: 'https://hackathon.openai.azure.com',
     apiKey: 'test-api-key',
-    deployment: 'gpt-4o',
+    deployment: 'gpt-5-1-chat',
     apiVersion: '2024-02-01',
   };
 
@@ -84,7 +84,7 @@ describe('classifyImageWithAzureOpenAI', () => {
     const [calledUrl, calledInit] = fetchSpy.mock.calls[0];
     expect(typeof calledUrl).toBe('string');
     expect((calledUrl as string)).toContain('hackathon.openai.azure.com');
-    expect((calledUrl as string)).toContain('/openai/deployments/gpt-4o/chat/completions');
+    expect((calledUrl as string)).toContain('/openai/deployments/gpt-5-1-chat/chat/completions');
     expect((calledUrl as string)).toContain('api-version=2024-02-01');
     const headers = (calledInit as RequestInit).headers as Record<string, string>;
     expect(headers['api-key']).toBe('test-api-key');
