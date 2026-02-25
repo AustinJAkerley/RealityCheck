@@ -8,7 +8,9 @@ describe('VideoDetector', () => {
   test('obvious metadata URL verdict bypasses local ML and remote', async () => {
     const runMock = jest.fn().mockResolvedValue(0.05);
     registerMlModel({ run: runMock });
-    const fetchMock = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('no remote'));
+    const originalFetch = (globalThis as { fetch?: unknown }).fetch;
+    const fetchMock = jest.fn().mockRejectedValue(new Error('no remote'));
+    (globalThis as { fetch?: unknown }).fetch = fetchMock;
 
     try {
       const detector = new VideoDetector();
@@ -22,7 +24,7 @@ describe('VideoDetector', () => {
       expect(runMock).not.toHaveBeenCalled();
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {
-      fetchMock.mockRestore();
+      (globalThis as { fetch?: unknown }).fetch = originalFetch;
     }
   });
 
@@ -83,7 +85,7 @@ describe('VideoDetector', () => {
       });
       expect(result.contentType).toBe('video');
       expect(runMock).toHaveBeenCalled();
-      expect(result.score).toBeCloseTo(0.8, 5);
+      expect(result.score).toBe(0.95);
       expect(result.decisionStage).toBe('local_ml');
       expect(result.details).toContain('Local ML frame verdict');
     } finally {
@@ -214,12 +216,14 @@ describe('VideoDetector', () => {
   test('uncertain local ML frame score escalates to remote ML', async () => {
     const runMock = jest.fn().mockResolvedValue(0.5);
     registerMlModel({ run: runMock });
-    const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+    const originalFetch = (globalThis as { fetch?: unknown }).fetch;
+    const fetchMock = jest.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ score: 0.9, label: 'ai' }),
       status: 200,
       statusText: 'OK',
     } as Response);
+    (globalThis as { fetch?: unknown }).fetch = fetchMock;
 
     const detector = new VideoDetector();
     const video = document.createElement('video');
@@ -274,11 +278,11 @@ describe('VideoDetector', () => {
       expect(result.isAIGenerated).toBe(true);
     } finally {
       createSpy.mockRestore();
-      fetchMock.mockRestore();
+      (globalThis as { fetch?: unknown }).fetch = originalFetch;
     }
   });
 
-  test('high-quality video local ML receives higher-resolution frame input', async () => {
+  test('high-quality video local ML receives full-resolution frame input', async () => {
     const runMock = jest.fn().mockResolvedValue(0.95);
     registerMlModel({ run: runMock });
 
@@ -330,8 +334,126 @@ describe('VideoDetector', () => {
         detectionQuality: 'high',
       });
       expect(runMock).toHaveBeenCalled();
-      expect(runMock.mock.calls[0][1]).toBe(160);
-      expect(runMock.mock.calls[0][2]).toBe(160);
+      const hasFullResCall = runMock.mock.calls.some((call) => call[1] === 640 && call[2] === 360);
+      expect(hasFullResCall).toBe(true);
+    } finally {
+      createSpy.mockRestore();
+    }
+  });
+
+  test('medium-quality video local ML receives half-resolution frame input', async () => {
+    const runMock = jest.fn().mockResolvedValue(0.95);
+    registerMlModel({ run: runMock });
+
+    const detector = new VideoDetector();
+    const video = document.createElement('video');
+    Object.defineProperty(video, 'duration', { configurable: true, value: 12 });
+    Object.defineProperty(video, 'videoWidth', { configurable: true, value: 640 });
+    Object.defineProperty(video, 'videoHeight', { configurable: true, value: 360 });
+    Object.defineProperty(video, 'currentSrc', {
+      configurable: true,
+      value: 'https://example.com/video.mp4',
+    });
+
+    let currentTime = 0;
+    Object.defineProperty(video, 'currentTime', {
+      configurable: true,
+      get: () => currentTime,
+      set: (value: number) => {
+        currentTime = value;
+        setTimeout(() => video.dispatchEvent(new Event('seeked')), 0);
+      },
+    });
+
+    const originalCreateElement = document.createElement.bind(document);
+    const createSpy = jest.spyOn(document, 'createElement');
+    createSpy.mockImplementation(((tagName: string) => {
+      if (tagName !== 'canvas') return originalCreateElement(tagName);
+      const data = new Uint8ClampedArray(64 * 64 * 4);
+      for (let i = 0; i < data.length; i += 4) {
+        data[i] = 150;
+        data[i + 1] = 150;
+        data[i + 2] = 150;
+        data[i + 3] = 255;
+      }
+      return {
+        width: 0,
+        height: 0,
+        getContext: () => ({
+          drawImage: () => undefined,
+          getImageData: () => ({ data }),
+        }),
+        toDataURL: () => 'data:image/jpeg;base64,frame',
+      } as unknown as HTMLCanvasElement;
+    }) as typeof document.createElement);
+
+    try {
+      await detector.detect(video, {
+        remoteEnabled: false,
+        detectionQuality: 'medium',
+      });
+      expect(runMock).toHaveBeenCalled();
+      const hasHalfResCall = runMock.mock.calls.some((call) => call[1] === 320 && call[2] === 180);
+      expect(hasHalfResCall).toBe(true);
+    } finally {
+      createSpy.mockRestore();
+    }
+  });
+
+  test('low-quality video local ML receives 192-max-side frame input', async () => {
+    const runMock = jest.fn().mockResolvedValue(0.95);
+    registerMlModel({ run: runMock });
+
+    const detector = new VideoDetector();
+    const video = document.createElement('video');
+    Object.defineProperty(video, 'duration', { configurable: true, value: 12 });
+    Object.defineProperty(video, 'videoWidth', { configurable: true, value: 640 });
+    Object.defineProperty(video, 'videoHeight', { configurable: true, value: 360 });
+    Object.defineProperty(video, 'currentSrc', {
+      configurable: true,
+      value: 'https://example.com/video.mp4',
+    });
+
+    let currentTime = 0;
+    Object.defineProperty(video, 'currentTime', {
+      configurable: true,
+      get: () => currentTime,
+      set: (value: number) => {
+        currentTime = value;
+        setTimeout(() => video.dispatchEvent(new Event('seeked')), 0);
+      },
+    });
+
+    const originalCreateElement = document.createElement.bind(document);
+    const createSpy = jest.spyOn(document, 'createElement');
+    createSpy.mockImplementation(((tagName: string) => {
+      if (tagName !== 'canvas') return originalCreateElement(tagName);
+      const data = new Uint8ClampedArray(64 * 64 * 4);
+      for (let i = 0; i < data.length; i += 4) {
+        data[i] = 150;
+        data[i + 1] = 150;
+        data[i + 2] = 150;
+        data[i + 3] = 255;
+      }
+      return {
+        width: 0,
+        height: 0,
+        getContext: () => ({
+          drawImage: () => undefined,
+          getImageData: () => ({ data }),
+        }),
+        toDataURL: () => 'data:image/jpeg;base64,frame',
+      } as unknown as HTMLCanvasElement;
+    }) as typeof document.createElement);
+
+    try {
+      await detector.detect(video, {
+        remoteEnabled: false,
+        detectionQuality: 'low',
+      });
+      expect(runMock).toHaveBeenCalled();
+      const hasLowResCall = runMock.mock.calls.some((call) => call[1] === 192 && call[2] === 108);
+      expect(hasLowResCall).toBe(true);
     } finally {
       createSpy.mockRestore();
     }

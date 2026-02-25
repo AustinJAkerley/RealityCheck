@@ -43,7 +43,6 @@ const PHOTOREALISM_SKIP_THRESHOLD = 0.20;
 const OBVIOUS_METADATA_AI_THRESHOLD = 0.7;
 const LOCAL_UNCERTAIN_MIN = 0.25;
 const LOCAL_UNCERTAIN_MAX = 0.75;
-const LOCAL_ML_SIZE = 192;
 
 // ── ML model registry ────────────────────────────────────────────────────────
 
@@ -405,18 +404,40 @@ function extractPixelData(img: HTMLImageElement): Uint8ClampedArray | null {
   }
 }
 
-function extractPixelDataAtSize(img: HTMLImageElement, size: number): Uint8ClampedArray | null {
+function extractPixelDataAtDimensions(
+  img: HTMLImageElement,
+  width: number,
+  height: number
+): Uint8ClampedArray | null {
   try {
     const canvas = document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
+    canvas.width = width;
+    canvas.height = height;
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
-    ctx.drawImage(img, 0, 0, size, size);
-    return ctx.getImageData(0, 0, size, size).data;
+    ctx.drawImage(img, 0, 0, width, height);
+    return ctx.getImageData(0, 0, width, height).data;
   } catch {
     return null;
   }
+}
+
+function getMlSampleDimensions(
+  width: number,
+  height: number,
+  quality: DetectionQuality
+): { width: number; height: number } {
+  if (quality === 'high') {
+    return { width, height };
+  }
+  if (quality === 'medium') {
+    return { width: Math.max(1, Math.round(width / 2)), height: Math.max(1, Math.round(height / 2)) };
+  }
+  const scale = Math.min(1, 192 / Math.max(width, height));
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
 }
 
 /**
@@ -590,22 +611,28 @@ export class ImageDetector implements Detector {
     // well-exposed luminance). Improves detection of AI images that don't
     // match known CDN patterns or dimension heuristics.
     let combinedLocalScore = isObviousMetadataAI ? 0.95 : localScore;
-    if (!isObviousMetadataAI && pixelData && quality !== 'low') {
-      const visualScore = computeVisualAIScore(pixelData, PREFILTER_SIZE, PREFILTER_SIZE);
-      // Give visual pixel analysis equal standing with URL/dimension heuristics.
-      // Take the higher of the URL/dimension score or the visual score (after discount).
-      // The previous *0.6 double-discount when localScore>=0.3 made visual analysis
-      // nearly irrelevant for the most common case (re-uploaded AI images with some
-      // dimension match but no CDN URL match). Removed that double-discount.
-      const visualWeight = quality === 'high' ? 0.85 : 0.75;
-      combinedLocalScore = Math.max(localScore, visualScore * visualWeight);
-      if (quality === 'high') {
-        const highResPixelData = img ? extractPixelDataAtSize(img, LOCAL_ML_SIZE) : null;
-        const mlPixelData = highResPixelData ?? pixelData;
-        const mlInputSize = highResPixelData ? LOCAL_ML_SIZE : PREFILTER_SIZE;
-        const mlScore = await runMlModelScore(mlPixelData, mlInputSize, mlInputSize);
+    if (!isObviousMetadataAI && pixelData) {
+      if (quality !== 'low') {
+        const visualScore = computeVisualAIScore(pixelData, PREFILTER_SIZE, PREFILTER_SIZE);
+        // Give visual pixel analysis equal standing with URL/dimension heuristics.
+        // Take the higher of the URL/dimension score or the visual score (after discount).
+        // The previous *0.6 double-discount when localScore>=0.3 made visual analysis
+        // nearly irrelevant for the most common case (re-uploaded AI images with some
+        // dimension match but no CDN URL match). Removed that double-discount.
+        const visualWeight = quality === 'high' ? 0.85 : 0.75;
+        combinedLocalScore = Math.max(localScore, visualScore * visualWeight);
+      }
+      if (img) {
+        const mlDims = getMlSampleDimensions(
+          Math.max(1, img.naturalWidth || PREFILTER_SIZE),
+          Math.max(1, img.naturalHeight || PREFILTER_SIZE),
+          quality
+        );
+        const mlPixelData =
+          extractPixelDataAtDimensions(img, mlDims.width, mlDims.height) ?? pixelData;
+        const mlScore = await runMlModelScore(mlPixelData, mlDims.width, mlDims.height);
         if (mlScore !== null) {
-          // In high mode, use local ML first. Escalate to remote only if uncertain.
+          // Use local ML first. Escalate to remote only if uncertain.
           if (mlScore >= LOCAL_UNCERTAIN_MAX) {
             combinedLocalScore = 0.95;
           } else if (mlScore <= LOCAL_UNCERTAIN_MIN) {
@@ -628,7 +655,7 @@ export class ImageDetector implements Detector {
     // When options.fetchBytes is provided (e.g. via a background service worker
     // that is not CORS-restricted), use it. Otherwise fall back to direct fetch.
     let metadataDataUrl: string | null = null;
-    if (src && /^https?:\/\//.test(src)) {
+    if (!isObviousMetadataAI && src && /^https?:\/\//.test(src)) {
       try {
         if (options.fetchBytes) {
           // Extension-provided fetch: bypasses CORS (background SW context)

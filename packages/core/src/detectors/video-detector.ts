@@ -132,10 +132,27 @@ function seekTo(video: HTMLVideoElement, time: number, timeoutMs = 500): Promise
 const MULTI_FRAME_COUNT = 5;
 /** Downscale size for temporal frame comparison */
 const FRAME_ANALYSIS_SIZE = 64;
-const ML_FRAME_SIZE = 160;
 const OBVIOUS_METADATA_AI_THRESHOLD = 0.7;
 const LOCAL_UNCERTAIN_MIN = 0.25;
 const LOCAL_UNCERTAIN_MAX = 0.75;
+
+function getMlFrameDimensions(
+  width: number,
+  height: number,
+  quality: DetectorOptions['detectionQuality']
+): { width: number; height: number } {
+  if (quality === 'high') {
+    return { width, height };
+  }
+  if (quality === 'medium') {
+    return { width: Math.max(1, Math.round(width / 2)), height: Math.max(1, Math.round(height / 2)) };
+  }
+  const scale = Math.min(1, 192 / Math.max(width, height));
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
+}
 
 /**
  * Sample multiple frames from the video and compute temporal consistency.
@@ -164,6 +181,7 @@ async function analyzeVideoFrames(
   const frameDataUrls: string[] = [];
   const framePixels: Uint8ClampedArray[] = [];
   const mlFramePixels: Uint8ClampedArray[] = [];
+  const mlDims = getMlFrameDimensions(video.videoWidth, video.videoHeight, quality);
 
   // Sample at evenly-spaced intervals, skipping the very start and end
   const step = duration / (MULTI_FRAME_COUNT + 1);
@@ -173,7 +191,7 @@ async function analyzeVideoFrames(
     await seekTo(video, step * i);
     const pixels = captureFramePixels(video, FRAME_ANALYSIS_SIZE, FRAME_ANALYSIS_SIZE);
     if (pixels) framePixels.push(pixels);
-    const mlPixels = captureFramePixels(video, ML_FRAME_SIZE, ML_FRAME_SIZE);
+    const mlPixels = captureFramePixels(video, mlDims.width, mlDims.height);
     if (mlPixels) mlFramePixels.push(mlPixels);
     const dataUrl = captureVideoFrame(video);
     if (dataUrl) frameDataUrls.push(dataUrl);
@@ -215,15 +233,13 @@ async function analyzeVideoFrames(
 
   let modelScore = 0;
   let hasModelScore = false;
-  if (quality === 'high') {
-    const modelScores = await Promise.all(
-      mlFramePixels.map((px) => runMlModelScore(px, ML_FRAME_SIZE, ML_FRAME_SIZE))
-    );
-    const usableScores = modelScores.filter((s): s is number => typeof s === 'number');
-    if (usableScores.length > 0) {
-      modelScore = usableScores.reduce((a, b) => a + b, 0) / usableScores.length;
-      hasModelScore = true;
-    }
+  const modelScores = await Promise.all(
+    mlFramePixels.map((px) => runMlModelScore(px, mlDims.width, mlDims.height))
+  );
+  const usableScores = modelScores.filter((s): s is number => typeof s === 'number');
+  if (usableScores.length > 0) {
+    modelScore = usableScores.reduce((a, b) => a + b, 0) / usableScores.length;
+    hasModelScore = true;
   }
 
   return { frames: frameDataUrls, temporalScore, visualScore, modelScore, hasModelScore };
@@ -295,8 +311,8 @@ export class VideoDetector implements Detector {
         // meaningful weight when there is no URL match.
         const temporalBoost = Math.min(0.3, temporalScore);
         const visualBoost = videoVisualScore * 0.35;
-        if (options.detectionQuality === 'high' && hasVideoModelScore) {
-          // In high mode, use local ML first. Escalate to remote only if uncertain.
+        if (hasVideoModelScore) {
+          // Use local ML first. Escalate to remote only if uncertain.
           if (videoModelScore >= LOCAL_UNCERTAIN_MAX) {
             finalScore = 0.95;
           } else if (videoModelScore <= LOCAL_UNCERTAIN_MIN) {

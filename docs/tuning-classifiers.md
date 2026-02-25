@@ -192,10 +192,11 @@ Current cascade behavior for media:
 ## Local model quality notes (production)
 
 - The old `64x64` local-only path is not sufficient for robust photorealistic detection on mixed search pages.
-- High mode now feeds the local model with larger samples:
-  - images: `192x192`
-  - video frames: `160x160`
-- This preserves more texture/detail and improves local model signal before remote escalation.
+- Local model input resolution now follows quality mode:
+  - **high**: full media resolution to local ML
+  - **medium**: half resolution
+  - **low**: reduced to max side `192`
+- This preserves more texture/detail at higher quality levels and reduces quality collapse on photorealistic content.
 
 Recommended production strategy:
 
@@ -203,6 +204,10 @@ Recommended production strategy:
 2. run **local ML first** for photorealistic candidates,
 3. escalate to **remote ML** only when local confidence is uncertain,
 4. use logging (`stage`, `details`, `durationMs`) to monitor false positives and latency.
+
+### Should we use a newer model than Nonescape mini?
+
+Yes—if production accuracy is below target, swap to a newer photorealistic-focused model via the same adapter contract. Keep Nonescape as a baseline, then compare newer models against your labeled benchmark set before rollout.
 
 To swap to a newer bundled model runtime later, keep using the same adapter and pass a new API implementation:
 
