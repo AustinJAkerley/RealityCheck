@@ -24,7 +24,6 @@ import { DEFAULT_REMOTE_ENDPOINT } from '../types.js';
 import { DetectionCache } from '../utils/cache.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
 import { hashUrl, hashDataUrl } from '../utils/hash.js';
-import { createRemoteAdapter } from '../adapters/remote-adapter.js';
 import { computeVisualAIScore } from './image-detector.js';
 
 const AI_VIDEO_PATTERNS: RegExp[] = [
@@ -267,9 +266,8 @@ export class VideoDetector implements Detector {
               imageHash,
               imageDataUrl: frameDataUrl,
             };
-            const result = options.remoteClassify
-              ? await options.remoteClassify(endpoint, apiKey, 'video', payload)
-              : await createRemoteAdapter(endpoint, apiKey).classify('video', payload);
+            if (!options.remoteClassify) throw new Error('remoteClassify callback required');
+            const result = await options.remoteClassify(endpoint, apiKey, 'video', payload);
             finalScore = finalScore * 0.3 + result.score * 0.7;
             source = 'remote';
           }

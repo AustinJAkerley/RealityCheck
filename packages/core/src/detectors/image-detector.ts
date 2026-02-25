@@ -25,7 +25,6 @@ import { DEFAULT_REMOTE_ENDPOINT } from '../types.js';
 import { DetectionCache } from '../utils/cache.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
 import { hashUrl, hashDataUrl } from '../utils/hash.js';
-import { createRemoteAdapter } from '../adapters/remote-adapter.js';
 import { parseExifFromDataUrl, getExifAIScore } from '../utils/exif-parser.js';
 import { detectC2PAFromDataUrl } from '../utils/c2pa.js';
 
@@ -666,12 +665,11 @@ export class ImageDetector implements Detector {
             // canvas is unavailable (e.g. cross-origin image, no CORS headers).
             imageUrl: dataUrl ? undefined : src,
           };
-          // Use the CORS-free remoteClassify callback if provided (extension
-          // content scripts route through the background service worker);
-          // otherwise call the adapter directly (works in non-CORS contexts).
-          const result = options.remoteClassify
-            ? await options.remoteClassify(endpoint, apiKey, 'image', payload)
-            : await createRemoteAdapter(endpoint, apiKey).classify('image', payload);
+          // Remote classification must go through the remoteClassify callback
+          // (provided by extension content scripts to route via the CORS-free
+          // background service worker). Skip remote if callback is not set.
+          if (!options.remoteClassify) throw new Error('remoteClassify callback required');
+          const result = await options.remoteClassify(endpoint, apiKey, 'image', payload);
           finalScore = combinedLocalScore * 0.3 + result.score * 0.7;
           source = 'remote';
         } catch {

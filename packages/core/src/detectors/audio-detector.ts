@@ -23,7 +23,6 @@ import { DEFAULT_REMOTE_ENDPOINT } from '../types.js';
 import { DetectionCache } from '../utils/cache.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
 import { hashUrl } from '../utils/hash.js';
-import { createRemoteAdapter } from '../adapters/remote-adapter.js';
 
 /** Known AI audio generation / voice cloning platform URL patterns */
 const AI_AUDIO_PATTERNS: RegExp[] = [
@@ -129,9 +128,8 @@ export class AudioDetector implements Detector {
           // RemotePayload uses imageHash as a generic content identifier;
           // for audio we send the URL hash as the content fingerprint.
           const payload: RemotePayload = { imageHash: hashUrl(src) };
-          const result = options.remoteClassify
-            ? await options.remoteClassify(endpoint, apiKey, 'audio', payload)
-            : await createRemoteAdapter(endpoint, apiKey).classify('audio', payload);
+          if (!options.remoteClassify) throw new Error('remoteClassify callback required');
+          const result = await options.remoteClassify(endpoint, apiKey, 'audio', payload);
           finalScore = localScore * 0.3 + result.score * 0.7;
           source = 'remote';
         } catch {

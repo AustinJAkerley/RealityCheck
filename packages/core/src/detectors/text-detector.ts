@@ -19,7 +19,6 @@ import { DEFAULT_REMOTE_ENDPOINT } from '../types.js';
 import { DetectionCache } from '../utils/cache.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
 import { hashText } from '../utils/hash.js';
-import { createRemoteAdapter } from '../adapters/remote-adapter.js';
 
 /** Known AI filler phrases — extend as needed */
 const AI_FILLER_PHRASES: RegExp[] = [
@@ -162,9 +161,8 @@ export class TextDetector implements Detector {
           const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
           const apiKey = options.remoteApiKey || '';
           const payload: RemotePayload = { text: text.slice(0, 2000) };
-          const result = options.remoteClassify
-            ? await options.remoteClassify(endpoint, apiKey, 'text', payload)
-            : await createRemoteAdapter(endpoint, apiKey).classify('text', payload);
+          if (!options.remoteClassify) throw new Error('remoteClassify callback required');
+          const result = await options.remoteClassify(endpoint, apiKey, 'text', payload);
           // Blend local + remote scores (weight remote more heavily)
           finalScore = localScore * 0.3 + result.score * 0.7;
           source = 'remote';

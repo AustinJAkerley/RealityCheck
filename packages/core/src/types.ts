@@ -68,18 +68,15 @@ export interface DetectorOptions {
    */
   remoteApiKey?: string;
   /**
-   * Optional callback to perform remote classification via a CORS-free context.
+   * Callback to perform remote classification via the background service worker.
    *
-   * Content scripts cannot call external APIs directly due to CORS restrictions.
-   * Providing this callback (e.g. by routing through the extension's background
-   * service worker) allows the detector to perform remote classification without
-   * triggering CORS errors.
+   * This is the single code path for all remote API calls. Content scripts
+   * must provide this callback to route requests through the CORS-free
+   * background context. When `remoteEnabled` is true but this callback is
+   * not set, remote classification is skipped (falls back to local score).
    *
    * The callback receives the endpoint URL, API key, content type, and payload,
    * and must return the classification result.
-   *
-   * When omitted, detectors call `createRemoteAdapter` directly (only works in
-   * contexts where CORS is not an issue, e.g. background scripts or Node.js).
    */
   remoteClassify?: (
     endpoint: string,
