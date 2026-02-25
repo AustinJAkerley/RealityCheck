@@ -252,6 +252,17 @@ function scoreToConfidence(score: number): DetectionResult['confidence'] {
   return 'low';
 }
 
+function formatHeuristicStep(
+  label: string,
+  value: number | undefined,
+  threshold: number
+): string {
+  if (typeof value !== 'number') return `${label} = n/a`;
+  return `${label} = ${value.toFixed(2)} : threshold (${threshold.toFixed(2)}) => ${
+    value >= threshold ? 'AI' : 'Not AI'
+  }`;
+}
+
 export class VideoDetector implements Detector {
   readonly contentType = 'video' as const;
   private readonly cache = new DetectionCache<DetectionResult>();
@@ -401,6 +412,15 @@ export class VideoDetector implements Detector {
       heuristicScores,
       details,
     };
+
+    const heuristicSummary = [
+      formatHeuristicStep('CDN Score', heuristicScores.metadataUrl, 0.7),
+      formatHeuristicStep('Temporal Analysis', heuristicScores.temporal, 0.2),
+      formatHeuristicStep('Visual Score', heuristicScores.visual, 0.35),
+      formatHeuristicStep('Local ML Score', heuristicScores.localMl, 0.75),
+      formatHeuristicStep('Remote ML Score', heuristicScores.remote, 0.5),
+    ].join(' | ');
+    result.details = result.details ? `${result.details} | ${heuristicSummary}` : heuristicSummary;
 
     this.cache.set(cacheKey, result);
     return result;

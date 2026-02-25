@@ -33,6 +33,10 @@ In dev mode, both AI and Not-AI watermarks include this `detectionId`, so missed
 
 You will also see skip logs for images/videos that are ignored (e.g. thumbnail overlap, too small, already processing) with their own `detectionId`.
 
+`details` now includes explicit step formatting, for example:
+
+`CDN Score = 0.00 : threshold (0.70) => Not AI | Temporal Analysis = 0.04 : threshold (0.20) => Not AI | Local ML Score = 0.81 : threshold (0.75) => AI`
+
 Use these to identify expensive paths:
 
 - High `durationMs` + `Local ML` => local model is hot path.
