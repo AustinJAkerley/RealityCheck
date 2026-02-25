@@ -19,12 +19,11 @@
  * - Frame sampling cannot reliably detect all deepfakes.
  * - Multi-frame seeking is asynchronous and may not work on all browsers/codecs.
  */
-import { DetectionResult, Detector, DetectorOptions } from '../types.js';
+import { DetectionResult, DetectionQuality, Detector, DetectorOptions, RemotePayload } from '../types.js';
 import { DEFAULT_REMOTE_ENDPOINT } from '../types.js';
 import { DetectionCache } from '../utils/cache.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
 import { hashUrl, hashDataUrl } from '../utils/hash.js';
-import { createRemoteAdapter } from '../adapters/remote-adapter.js';
 import { computeVisualAIScore } from './image-detector.js';
 
 const AI_VIDEO_PATTERNS: RegExp[] = [
@@ -211,7 +210,11 @@ function scoreToConfidence(score: number): DetectionResult['confidence'] {
 export class VideoDetector implements Detector {
   readonly contentType = 'video' as const;
   private readonly cache = new DetectionCache<DetectionResult>();
-  private readonly rateLimiter = new RateLimiter(5, 60_000);
+  private readonly rateLimiters: Record<DetectionQuality, RateLimiter> = {
+    low: new RateLimiter(5, 60_000),
+    medium: new RateLimiter(15, 60_000),
+    high: new RateLimiter(30, 60_000),
+  };
 
   async detect(content: string | HTMLElement, options: DetectorOptions): Promise<DetectionResult> {
     const video = content instanceof HTMLVideoElement ? content : null;
@@ -252,7 +255,8 @@ export class VideoDetector implements Detector {
 
     // Step 3: Remote classification — send best available frame.
     if (options.remoteEnabled && video) {
-      if (this.rateLimiter.consume()) {
+      const rl = this.rateLimiters[options.detectionQuality ?? 'medium'];
+      if (rl.consume()) {
         try {
           // Prefer frames from multi-frame analysis; fall back to a fresh single-frame
           // capture only when multi-frame analysis returned no frames (e.g. video not
@@ -262,16 +266,20 @@ export class VideoDetector implements Detector {
           if (frameDataUrl) {
             const imageHash = hashDataUrl(frameDataUrl);
             const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
-            const adapter = createRemoteAdapter(endpoint);
-            const result = await adapter.classify('video', {
+            const apiKey = options.remoteApiKey || '';
+            const payload: RemotePayload = {
               imageHash,
               imageDataUrl: frameDataUrl,
-            });
+            };
+            if (!options.remoteClassify) throw new Error('remoteClassify callback required');
+            const result = await options.remoteClassify(endpoint, apiKey, 'video', payload);
             finalScore = finalScore * 0.3 + result.score * 0.7;
             source = 'remote';
           }
-        } catch {
-          // Fall back to local
+        } catch (err) {
+          // Remote call failed — return the token so it can be used for other content
+          rl.returnToken();
+          console.warn('[RealityCheck] Remote video classification failed:', err instanceof Error ? err.message : err);
         }
       }
     }

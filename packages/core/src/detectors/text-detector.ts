@@ -14,12 +14,11 @@
  * These heuristics have known limitations (false positives/negatives).
  * See docs/architecture.md for accuracy discussion and mitigation strategies.
  */
-import { DetectionResult, Detector, DetectorOptions } from '../types.js';
+import { DetectionResult, DetectionQuality, Detector, DetectorOptions, RemotePayload } from '../types.js';
 import { DEFAULT_REMOTE_ENDPOINT } from '../types.js';
 import { DetectionCache } from '../utils/cache.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
 import { hashText } from '../utils/hash.js';
-import { createRemoteAdapter } from '../adapters/remote-adapter.js';
 
 /** Known AI filler phrases — extend as needed */
 const AI_FILLER_PHRASES: RegExp[] = [
@@ -140,7 +139,11 @@ const INCONCLUSIVE_HIGH = 0.65;
 export class TextDetector implements Detector {
   readonly contentType = 'text' as const;
   private readonly cache = new DetectionCache<DetectionResult>();
-  private readonly rateLimiter = new RateLimiter(10, 60_000);
+  private readonly rateLimiters: Record<DetectionQuality, RateLimiter> = {
+    low: new RateLimiter(10, 60_000),
+    medium: new RateLimiter(30, 60_000),
+    high: new RateLimiter(60, 60_000),
+  };
 
   async detect(content: string | HTMLElement, options: DetectorOptions): Promise<DetectionResult> {
     const text = typeof content === 'string' ? content : (content as HTMLElement).innerText ?? '';
@@ -157,16 +160,21 @@ export class TextDetector implements Detector {
     // Escalate to remote only when the local score is inconclusive
     const inconclusive = localScore >= INCONCLUSIVE_LOW && localScore <= INCONCLUSIVE_HIGH;
     if (options.remoteEnabled && inconclusive) {
-      if (this.rateLimiter.consume()) {
+      const rl = this.rateLimiters[options.detectionQuality ?? 'medium'];
+      if (rl.consume()) {
         try {
           const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
-          const adapter = createRemoteAdapter(endpoint);
-          const result = await adapter.classify('text', { text: text.slice(0, 2000) });
+          const apiKey = options.remoteApiKey || '';
+          const payload: RemotePayload = { text: text.slice(0, 2000) };
+          if (!options.remoteClassify) throw new Error('remoteClassify callback required');
+          const result = await options.remoteClassify(endpoint, apiKey, 'text', payload);
           // Blend local + remote scores (weight remote more heavily)
           finalScore = localScore * 0.3 + result.score * 0.7;
           source = 'remote';
-        } catch {
-          // Remote call failed — fall back to local score only
+        } catch (err) {
+          // Remote call failed — return the token so it can be used for other content
+          rl.returnToken();
+          console.warn('[RealityCheck] Remote text classification failed:', err instanceof Error ? err.message : err);
         }
       }
     }

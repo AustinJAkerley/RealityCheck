@@ -22,12 +22,13 @@ export type WatermarkPosition = 'center' | 'top-left' | 'top-right' | 'bottom';
 export type DetectionQuality = 'low' | 'medium' | 'high';
 
 /**
- * Default hosted endpoint — our Azure-hosted AI classifier proxy.
- * Users do not need to provide an API key; the proxy authenticates the extension
- * via standard extension certificate verification.
+ * Default remote endpoint — the hackathon Azure OpenAI APIM gateway.
+ * Extensions call this endpoint directly for AI classification.
+ * The endpoint includes the /openai path; deployment and api-version
+ * are appended by AzureOpenAIAdapter.
  * Can be overridden in the Advanced settings for development purposes.
  */
-export const DEFAULT_REMOTE_ENDPOINT = 'https://api.realitycheck.ai/v1/classify';
+export const DEFAULT_REMOTE_ENDPOINT = 'https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai';
 
 export interface DetectionResult {
   contentType: ContentType;
@@ -61,6 +62,28 @@ export interface DetectorOptions {
    * Only needed for advanced/development use.
    */
   remoteEndpoint?: string;
+  /**
+   * API key for the remote endpoint. Required when using Azure OpenAI directly.
+   * When omitted, no auth header is sent.
+   */
+  remoteApiKey?: string;
+  /**
+   * Callback to perform remote classification via the background service worker.
+   *
+   * This is the single code path for all remote API calls. Content scripts
+   * must provide this callback to route requests through the CORS-free
+   * background context. When `remoteEnabled` is true but this callback is
+   * not set, remote classification is skipped (falls back to local score).
+   *
+   * The callback receives the endpoint URL, API key, content type, and payload,
+   * and must return the classification result.
+   */
+  remoteClassify?: (
+    endpoint: string,
+    apiKey: string,
+    contentType: ContentType,
+    payload: RemotePayload
+  ) => Promise<RemoteClassificationResult>;
   /**
    * Optional callback to fetch raw image bytes as a base64 data URL.
    *
@@ -157,6 +180,8 @@ export interface RemotePayload {
   text?: string;
   imageDataUrl?: string;
   imageHash?: string;
+  /** Original image URL — used as a fallback by vision-capable adapters when imageDataUrl is unavailable (e.g. cross-origin canvas taint). */
+  imageUrl?: string;
 }
 
 export interface RemoteClassificationResult {

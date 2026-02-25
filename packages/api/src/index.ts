@@ -6,11 +6,19 @@
  * needed in production.
  *
  * Environment variables:
- *   PORT              — TCP port to listen on (default: 3000)
- *   CLASSIFY_API_KEY  — Shared secret the extension sends as a Bearer token.
- *                       When unset, authentication is skipped (dev mode).
- *   ALLOWED_ORIGINS   — Comma-separated list of additional trusted web origins.
- *                       Browser-extension origins are always trusted.
+ *   PORT                     — TCP port to listen on (default: 3000)
+ *   CLASSIFY_API_KEY         — Shared secret the extension sends as a Bearer token.
+ *                              When unset, authentication is skipped (dev mode).
+ *   ALLOWED_ORIGINS          — Comma-separated list of additional trusted web origins.
+ *                              Browser-extension origins are always trusted.
+ *   AZURE_OPENAI_ENDPOINT    — Azure OpenAI base URL (including the /openai path), e.g.
+ *                              https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai
+ *                              When set together with AZURE_OPENAI_API_KEY, image
+ *                              classification uses the Azure OpenAI Responses API
+ *                              instead of the built-in heuristic analyser.
+ *   AZURE_OPENAI_API_KEY     — Bearer token for APIM gateway authentication.
+ *   AZURE_OPENAI_DEPLOYMENT  — Model deployment name (default: gpt-5-1-chat).
+ *   AZURE_OPENAI_API_VERSION — Azure OpenAI API version (default: 2024-10-21).
  */
 import { createApp } from './app';
 
