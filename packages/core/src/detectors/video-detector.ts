@@ -375,18 +375,9 @@ export class VideoDetector implements Detector {
     }
 
     // Step 3: Remote classification — send best available frame.
-<<<<<<< HEAD
-    const shouldEscalateRemote =
-      !localAiLocked &&
-      finalScore > LOCAL_UNCERTAIN_MIN && finalScore < LOCAL_UNCERTAIN_MAX;
-
-    if (options.remoteEnabled && video && shouldEscalateRemote) {
-      if (this.rateLimiter.consume()) {
-=======
     if (options.remoteEnabled && video) {
       const rl = this.rateLimiters[options.detectionQuality ?? 'medium'];
       if (rl.consume()) {
->>>>>>> main
         try {
           // Prefer frames from multi-frame analysis; fall back to a fresh single-frame
           // capture only when multi-frame analysis returned no frames (e.g. video not
