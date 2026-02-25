@@ -271,8 +271,9 @@ export class VideoDetector implements Detector {
             finalScore = finalScore * 0.3 + result.score * 0.7;
             source = 'remote';
           }
-        } catch {
-          // Fall back to local
+        } catch (err) {
+          // Remote call failed — log the error and fall back to local score
+          console.warn('[RealityCheck] Remote video classification failed:', err instanceof Error ? err.message : err);
         }
       }
     }

@@ -132,8 +132,9 @@ export class AudioDetector implements Detector {
           const result = await options.remoteClassify(endpoint, apiKey, 'audio', payload);
           finalScore = localScore * 0.3 + result.score * 0.7;
           source = 'remote';
-        } catch {
-          // Fall back to local score
+        } catch (err) {
+          // Remote call failed — log the error and fall back to local score
+          console.warn('[RealityCheck] Remote audio classification failed:', err instanceof Error ? err.message : err);
         }
       }
     }

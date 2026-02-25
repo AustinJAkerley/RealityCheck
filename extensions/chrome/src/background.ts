@@ -96,7 +96,10 @@ chrome.runtime.onMessage.addListener(
       adapter
         .classify(contentType, payload)
         .then((result) => sendResponse({ ok: true, result }))
-        .catch((err: Error) => sendResponse({ ok: false, error: err.message }));
+        .catch((err: Error) => {
+          console.warn('[RealityCheck] Remote classification error:', err.message);
+          sendResponse({ ok: false, error: err.message });
+        });
       return true; // async response
     }
 

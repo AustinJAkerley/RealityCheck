@@ -83,7 +83,10 @@ browser.runtime.onMessage.addListener(
       return adapter
         .classify(contentType, payload)
         .then((result) => ({ ok: true, result }))
-        .catch((err: Error) => ({ ok: false, error: err.message }));
+        .catch((err: Error) => {
+          console.warn('[RealityCheck] Remote classification error:', err.message);
+          return { ok: false, error: err.message };
+        });
     }
 
     return undefined;

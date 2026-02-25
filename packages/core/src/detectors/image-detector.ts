@@ -672,8 +672,9 @@ export class ImageDetector implements Detector {
           const result = await options.remoteClassify(endpoint, apiKey, 'image', payload);
           finalScore = combinedLocalScore * 0.3 + result.score * 0.7;
           source = 'remote';
-        } catch {
-          // Remote call failed — fall back to local score
+        } catch (err) {
+          // Remote call failed — log the error and fall back to local score
+          console.warn('[RealityCheck] Remote image classification failed:', err instanceof Error ? err.message : err);
         }
       }
     }
