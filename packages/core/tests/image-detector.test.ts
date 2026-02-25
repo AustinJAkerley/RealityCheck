@@ -403,6 +403,7 @@ describe('ML model registry', () => {
       expect(result.source).toBe('local');
       expect(result.isAIGenerated).toBe(false);
       expect(result.decisionStage).toBe('local_ml');
+      expect(result.localModelScore).toBeCloseTo(0.05, 5);
       expect(result.details).toContain('Local ML verdict');
     } finally {
       createSpy.mockRestore();
@@ -451,6 +452,7 @@ describe('ML model registry', () => {
       expect(result.isAIGenerated).toBe(true);
       expect(result.score).toBe(0.95);
       expect(result.decisionStage).toBe('local_ml');
+      expect(result.localModelScore).toBeCloseTo(0.95, 5);
       expect(result.details).toContain('Local ML verdict');
     } finally {
       createSpy.mockRestore();

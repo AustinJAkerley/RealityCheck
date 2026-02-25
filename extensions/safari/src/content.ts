@@ -49,6 +49,10 @@ function decisionStageLabel(stage: string | undefined): string {
   return 'Initial';
 }
 
+function createDetectionId(kind: 'img' | 'vid'): string {
+  return `rc-${kind}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function getDetectorOptions(settings: ExtensionSettings): DetectorOptions {
@@ -137,10 +141,14 @@ async function processImage(img: HTMLImageElement, settings: ExtensionSettings):
     const t0 = performance.now();
     const result = await pipeline.analyzeImage(img, opts);
     const durationMs = Math.round((performance.now() - t0) * 100) / 100;
+    const detectionId = createDetectionId('img');
     console.info('[RealityCheck] Image detection', {
+      detectionId,
       stage: decisionStageLabel(result.decisionStage),
       score: result.score,
       source: result.source,
+      localModelScore: result.localModelScore,
+      markedAsAI: result.isAIGenerated,
       details: result.details,
       durationMs,
     });
@@ -154,7 +162,8 @@ async function processImage(img: HTMLImageElement, settings: ExtensionSettings):
         result.confidence,
         settings.watermark,
         decisionStageLabel(result.decisionStage),
-        result.details
+        result.details,
+        detectionId
       );
       handles.set(img, handle);
     } else if (settings.devMode) {
@@ -174,10 +183,14 @@ async function processVideo(video: HTMLVideoElement, settings: ExtensionSettings
     const t0 = performance.now();
     const result = await pipeline.analyzeVideo(video, opts);
     const durationMs = Math.round((performance.now() - t0) * 100) / 100;
+    const detectionId = createDetectionId('vid');
     console.info('[RealityCheck] Video detection', {
+      detectionId,
       stage: decisionStageLabel(result.decisionStage),
       score: result.score,
       source: result.source,
+      localModelScore: result.localModelScore,
+      markedAsAI: result.isAIGenerated,
       details: result.details,
       durationMs,
     });
@@ -191,7 +204,8 @@ async function processVideo(video: HTMLVideoElement, settings: ExtensionSettings
         result.confidence,
         settings.watermark,
         decisionStageLabel(result.decisionStage),
-        result.details
+        result.details,
+        detectionId
       );
       handles.set(video, handle);
     } else if (settings.devMode) {

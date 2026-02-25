@@ -202,7 +202,8 @@ export function applyMediaWatermark(
   confidence: ConfidenceLevel,
   config: WatermarkConfig,
   decisionStage?: string,
-  details?: string
+  details?: string,
+  detectionId?: string
 ): WatermarkHandle {
   injectStyles();
   _attachTrackingListeners();
@@ -230,6 +231,13 @@ export function applyMediaWatermark(
     stageBadge.className = 'rc-badge';
     stageBadge.textContent = `Flow: ${decisionStage}`;
     label.appendChild(stageBadge);
+  }
+  if (detectionId) {
+    const idBadge = document.createElement('div');
+    idBadge.className = 'rc-badge';
+    idBadge.textContent = `ID: ${detectionId}`;
+    label.appendChild(idBadge);
+    container.setAttribute('data-rc-detection-id', detectionId);
   }
   if (details) {
     container.title = details;

@@ -297,6 +297,7 @@ export class VideoDetector implements Detector {
     let videoVisualScore = 0;
     let videoModelScore = 0;
     let hasVideoModelScore = false;
+    let localModelScore: number | undefined = undefined;
     let capturedFrames: string[] = [];
     if (video) {
       try {
@@ -305,6 +306,7 @@ export class VideoDetector implements Detector {
         videoVisualScore = analysis.visualScore;
         videoModelScore = analysis.modelScore;
         hasVideoModelScore = analysis.hasModelScore;
+        if (hasVideoModelScore) localModelScore = videoModelScore;
         capturedFrames = analysis.frames;
 
         // Blend temporal and visual signals into local score.
@@ -375,6 +377,7 @@ export class VideoDetector implements Detector {
       score: finalScore,
       source,
       decisionStage,
+      localModelScore,
       details,
     };
 

@@ -600,6 +600,7 @@ export class ImageDetector implements Detector {
     const nh = img?.naturalHeight ?? 0;
     const localScore = computeLocalImageScore(src, nw, nh);
     const isObviousMetadataAI = localScore >= OBVIOUS_METADATA_AI_THRESHOLD;
+    let localModelScore: number | undefined = undefined;
     let decisionStage: DetectionResult['decisionStage'] = 'initial_heuristics';
     let details = isObviousMetadataAI
       ? `Initial heuristics (metadata) flagged obvious AI (${localScore.toFixed(2)})`
@@ -632,6 +633,7 @@ export class ImageDetector implements Detector {
           extractPixelDataAtDimensions(img, mlDims.width, mlDims.height) ?? pixelData;
         const mlScore = await runMlModelScore(mlPixelData, mlDims.width, mlDims.height);
         if (mlScore !== null) {
+          localModelScore = mlScore;
           // Use local ML first. Escalate to remote only if uncertain.
           if (mlScore >= LOCAL_UNCERTAIN_MAX) {
             combinedLocalScore = 0.95;
@@ -746,6 +748,7 @@ export class ImageDetector implements Detector {
       score: finalScore,
       source,
       decisionStage,
+      localModelScore,
       details,
     };
 
