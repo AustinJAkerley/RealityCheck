@@ -560,6 +560,7 @@ export class ImageDetector implements Detector {
     const nw = img?.naturalWidth ?? 0;
     const nh = img?.naturalHeight ?? 0;
     const localScore = computeLocalImageScore(src, nw, nh);
+    let decisionStage: DetectionResult['decisionStage'] = 'initial_heuristics';
 
     // ── Step 2b: Visual AI scoring (medium / high tiers) ─────────────────────
     // Uses per-pixel statistics from the pre-filter canvas sample to detect
@@ -581,6 +582,7 @@ export class ImageDetector implements Detector {
         if (mlScore !== null) {
           // In high mode, the bundled local model is the primary decision path.
           combinedLocalScore = mlScore;
+          decisionStage = 'local_ml';
         }
       }
     }
@@ -641,6 +643,10 @@ export class ImageDetector implements Detector {
 
     let finalScore = combinedLocalScore;
     let source: DetectionResult['source'] = 'local';
+    let details =
+      decisionStage === 'local_ml'
+        ? `Local ML verdict: ${combinedLocalScore >= 0.5 ? 'AI generated' : 'Not AI generated'} (${combinedLocalScore.toFixed(2)})`
+        : `Initial heuristics score: ${combinedLocalScore.toFixed(2)}`;
 
     // ── Step 3: Remote classification ─────────────────────────────────────────
     // Always send to remote when enabled and the image passed the pre-filter.
@@ -657,6 +663,8 @@ export class ImageDetector implements Detector {
           });
           finalScore = combinedLocalScore * 0.3 + result.score * 0.7;
           source = 'remote';
+          decisionStage = 'remote_ml';
+          details = `Remote ML score: ${result.score.toFixed(2)} (blended ${finalScore.toFixed(2)})`;
         } catch {
           // Remote call failed — fall back to local score
         }
@@ -674,6 +682,8 @@ export class ImageDetector implements Detector {
       confidence: scoreToConfidence(finalScore),
       score: finalScore,
       source,
+      decisionStage,
+      details,
     };
 
     this.cache.set(cacheKey, result);

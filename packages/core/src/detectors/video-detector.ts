@@ -243,9 +243,11 @@ export class VideoDetector implements Detector {
 
     // Step 1: URL heuristics
     const localScore = matchesAIVideoUrl(src) ? 0.7 : 0;
+    let decisionStage: DetectionResult['decisionStage'] = 'initial_heuristics';
 
     let finalScore = localScore;
     let source: DetectionResult['source'] = 'local';
+    let details = `Initial heuristics score: ${localScore.toFixed(2)}`;
 
     // Step 2: Multi-frame temporal analysis (same-origin video elements only).
     // This runs before remote classification to enrich the local signal.
@@ -271,9 +273,12 @@ export class VideoDetector implements Detector {
         if (options.detectionQuality === 'high' && hasVideoModelScore) {
           // In high mode, use bundled model output as the primary frame-level decision.
           finalScore = videoModelScore;
+          decisionStage = 'local_ml';
+          details = `Local ML frame verdict: ${videoModelScore >= 0.5 ? 'AI generated' : 'Not AI generated'} (${videoModelScore.toFixed(2)})`;
         } else {
           const modelBoost = videoModelScore * 0.45;
           finalScore = Math.min(1, localScore + temporalBoost + visualBoost + modelBoost);
+          details = `Initial+temporal+visual score: ${finalScore.toFixed(2)}`;
         }
       } catch {
         // Frame analysis failed — continue with URL score only
@@ -299,6 +304,8 @@ export class VideoDetector implements Detector {
             });
             finalScore = finalScore * 0.3 + result.score * 0.7;
             source = 'remote';
+            decisionStage = 'remote_ml';
+            details = `Remote ML score: ${result.score.toFixed(2)} (blended ${finalScore.toFixed(2)})`;
           }
         } catch {
           // Fall back to local
@@ -314,6 +321,8 @@ export class VideoDetector implements Detector {
       confidence: scoreToConfidence(finalScore),
       score: finalScore,
       source,
+      decisionStage,
+      details,
     };
 
     this.cache.set(cacheKey, result);

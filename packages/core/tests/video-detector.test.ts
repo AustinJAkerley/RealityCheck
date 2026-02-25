@@ -63,6 +63,8 @@ describe('VideoDetector', () => {
       expect(result.contentType).toBe('video');
       expect(runMock).toHaveBeenCalled();
       expect(result.score).toBeCloseTo(0.8, 5);
+      expect(result.decisionStage).toBe('local_ml');
+      expect(result.details).toContain('Local ML frame verdict');
     } finally {
       createSpy.mockRestore();
     }
@@ -121,6 +123,8 @@ describe('VideoDetector', () => {
       });
       expect(result.score).toBe(0.05);
       expect(result.isAIGenerated).toBe(false);
+      expect(result.decisionStage).toBe('local_ml');
+      expect(result.details).toContain('Local ML frame verdict');
     } finally {
       createSpy.mockRestore();
     }
@@ -179,6 +183,8 @@ describe('VideoDetector', () => {
       });
       expect(result.score).toBe(0.95);
       expect(result.isAIGenerated).toBe(true);
+      expect(result.decisionStage).toBe('local_ml');
+      expect(result.details).toContain('Local ML frame verdict');
     } finally {
       createSpy.mockRestore();
     }

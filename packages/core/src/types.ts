@@ -36,6 +36,8 @@ export interface DetectionResult {
   /** 0–1 probability score */
   score: number;
   source: 'local' | 'remote';
+  /** Which stage produced the final detection decision. */
+  decisionStage?: 'initial_heuristics' | 'local_ml' | 'remote_ml';
   /** Set to true when the photorealism pre-filter determined the image is not photorealistic */
   skippedByPreFilter?: boolean;
   details?: string;

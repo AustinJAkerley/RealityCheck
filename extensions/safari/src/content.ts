@@ -43,6 +43,12 @@ const processing = new Set<Element>();
 
 let currentSettings: ExtensionSettings | null = null;
 
+function decisionStageLabel(stage: string | undefined): string {
+  if (stage === 'local_ml') return 'Local ML';
+  if (stage === 'remote_ml') return 'Remote ML';
+  return 'Initial';
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function getDetectorOptions(settings: ExtensionSettings): DetectorOptions {
@@ -129,12 +135,24 @@ async function processImage(img: HTMLImageElement, settings: ExtensionSettings):
   try {
     const opts = getDetectorOptions(settings);
     const result = await pipeline.analyzeImage(img, opts);
+    console.info('[RealityCheck] Image detection', {
+      stage: decisionStageLabel(result.decisionStage),
+      score: result.score,
+      source: result.source,
+      details: result.details,
+    });
 
     // Guard again after await: a concurrent call may have already watermarked this element.
     if (handles.has(img)) return;
 
     if (result.isAIGenerated) {
-      const handle = applyMediaWatermark(img, result.confidence, settings.watermark);
+      const handle = applyMediaWatermark(
+        img,
+        result.confidence,
+        settings.watermark,
+        decisionStageLabel(result.decisionStage),
+        result.details
+      );
       handles.set(img, handle);
     } else if (settings.devMode) {
       handles.set(img, applyNotAIWatermark(img, settings.watermark));
@@ -151,12 +169,24 @@ async function processVideo(video: HTMLVideoElement, settings: ExtensionSettings
   try {
     const opts = getDetectorOptions(settings);
     const result = await pipeline.analyzeVideo(video, opts);
+    console.info('[RealityCheck] Video detection', {
+      stage: decisionStageLabel(result.decisionStage),
+      score: result.score,
+      source: result.source,
+      details: result.details,
+    });
 
     // Guard again after await: a concurrent call may have already watermarked this element.
     if (handles.has(video)) return;
 
     if (result.isAIGenerated) {
-      const handle = applyMediaWatermark(video, result.confidence, settings.watermark);
+      const handle = applyMediaWatermark(
+        video,
+        result.confidence,
+        settings.watermark,
+        decisionStageLabel(result.decisionStage),
+        result.details
+      );
       handles.set(video, handle);
     } else if (settings.devMode) {
       handles.set(video, applyNotAIWatermark(video, settings.watermark));

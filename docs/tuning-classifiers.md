@@ -179,6 +179,10 @@ registerNonescapeMiniModel(); // bundled model, ready after install
 
 In `high` mode, the bundled model returns a binary local verdict (`AI generated` vs `Not AI generated`) for image samples and sampled video frames.
 
+For shell-based local model checks (throw images at the bundled model and print the exact response format used by the extension), see:
+
+- `docs/local-model-shell-testing.md`
+
 To swap to a newer bundled model runtime later, keep using the same adapter and pass a new API implementation:
 
 ```ts

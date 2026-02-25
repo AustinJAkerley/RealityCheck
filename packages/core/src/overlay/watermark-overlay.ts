@@ -200,7 +200,9 @@ export interface WatermarkHandle {
 export function applyMediaWatermark(
   media: HTMLImageElement | HTMLVideoElement,
   confidence: ConfidenceLevel,
-  config: WatermarkConfig
+  config: WatermarkConfig,
+  decisionStage?: string,
+  details?: string
 ): WatermarkHandle {
   injectStyles();
   _attachTrackingListeners();
@@ -223,6 +225,16 @@ export function applyMediaWatermark(
   badge.className = 'rc-badge';
   badge.textContent = `${mediaType} ${confidenceLabel(confidence)}`;
   label.appendChild(badge);
+  if (decisionStage) {
+    const stageBadge = document.createElement('div');
+    stageBadge.className = 'rc-badge';
+    stageBadge.textContent = `Flow: ${decisionStage}`;
+    label.appendChild(stageBadge);
+  }
+  if (details) {
+    container.title = details;
+    label.title = details;
+  }
   container.appendChild(label);
   document.body.appendChild(container);
 
