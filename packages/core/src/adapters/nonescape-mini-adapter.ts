@@ -45,6 +45,12 @@ const builtInModels: Record<string, NonescapeModelApi> = {
   },
 };
 
+function classifyFromScore(score: number): number {
+  // Nonescape mini emits a binary class decision for extension use.
+  // Return a strong bounded confidence to keep detector thresholds stable.
+  return score >= 0.5 ? 0.95 : 0.05;
+}
+
 function extractFeatures(data: Uint8ClampedArray): NonescapeModelFeatures {
   const pixelCount = data.length / 4;
   if (pixelCount === 0) {
@@ -113,7 +119,7 @@ export function createNonescapeMiniRunner(
     async run(data: Uint8ClampedArray, width: number, height: number): Promise<number> {
       const features = extractFeatures(data);
       const rawScore = await modelApi.predict({ data, width, height, features });
-      return Math.max(0, Math.min(1, rawScore));
+      return classifyFromScore(Math.max(0, Math.min(1, rawScore)));
     },
   };
 }

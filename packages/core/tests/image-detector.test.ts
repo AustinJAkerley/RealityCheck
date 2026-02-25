@@ -361,5 +361,49 @@ describe('ML model registry', () => {
     const score = await runMlModelScore(noisyPixels(SIZE), SIZE, SIZE);
     expect(score).toBe(1);
   });
-});
 
+  test('high-quality image scoring follows local model verdict', async () => {
+    registerMlModel({
+      async run() {
+        return 0.05;
+      },
+    });
+    const detector = new ImageDetector();
+    const img = document.createElement('img');
+    Object.defineProperty(img, 'complete', { configurable: true, value: true });
+    Object.defineProperty(img, 'naturalWidth', { configurable: true, value: 1024 });
+    Object.defineProperty(img, 'naturalHeight', { configurable: true, value: 1024 });
+    Object.defineProperty(img, 'src', {
+      configurable: true,
+      value: 'https://midjourney.com/img.png',
+    });
+
+    const pixels = noisyPixels(SIZE);
+    const originalCreateElement = document.createElement.bind(document);
+    const createSpy = jest.spyOn(document, 'createElement');
+    createSpy.mockImplementation(((tagName: string) => {
+      if (tagName !== 'canvas') return originalCreateElement(tagName);
+      return {
+        width: 0,
+        height: 0,
+        getContext: () => ({
+          drawImage: () => undefined,
+          getImageData: () => ({ data: pixels }),
+        }),
+        toDataURL: () => 'data:image/jpeg;base64,mock',
+      } as unknown as HTMLCanvasElement;
+    }) as typeof document.createElement);
+
+    try {
+      const result = await detector.detect(img, {
+        remoteEnabled: false,
+        detectionQuality: 'high',
+        fetchBytes: async () => null,
+      });
+      expect(result.source).toBe('local');
+      expect(result.isAIGenerated).toBe(false);
+    } finally {
+      createSpy.mockRestore();
+    }
+  });
+});

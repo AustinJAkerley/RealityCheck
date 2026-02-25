@@ -579,7 +579,8 @@ export class ImageDetector implements Detector {
       if (quality === 'high') {
         const mlScore = await runMlModelScore(pixelData, PREFILTER_SIZE, PREFILTER_SIZE);
         if (mlScore !== null) {
-          combinedLocalScore = Math.max(combinedLocalScore, mlScore * 0.9);
+          // In high mode, the bundled local model is the primary decision path.
+          combinedLocalScore = mlScore;
         }
       }
     }

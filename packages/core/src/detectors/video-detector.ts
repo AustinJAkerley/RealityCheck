@@ -145,10 +145,16 @@ const FRAME_ANALYSIS_SIZE = 64;
 async function analyzeVideoFrames(
   video: HTMLVideoElement,
   quality: DetectorOptions['detectionQuality']
-): Promise<{ frames: string[]; temporalScore: number; visualScore: number; modelScore: number }> {
+): Promise<{
+  frames: string[];
+  temporalScore: number;
+  visualScore: number;
+  modelScore: number;
+  hasModelScore: boolean;
+}> {
   const duration = video.duration;
   if (!isFinite(duration) || duration <= 0 || video.videoWidth === 0) {
-    return { frames: [], temporalScore: 0, visualScore: 0, modelScore: 0 };
+    return { frames: [], temporalScore: 0, visualScore: 0, modelScore: 0, hasModelScore: false };
   }
 
   const frameDataUrls: string[] = [];
@@ -170,7 +176,7 @@ async function analyzeVideoFrames(
   await seekTo(video, savedTime);
 
   if (framePixels.length < 2) {
-    return { frames: frameDataUrls, temporalScore: 0, visualScore: 0, modelScore: 0 };
+    return { frames: frameDataUrls, temporalScore: 0, visualScore: 0, modelScore: 0, hasModelScore: false };
   }
 
   // Compute frame-to-frame differences
@@ -201,6 +207,7 @@ async function analyzeVideoFrames(
     visualScores.reduce((a, b) => a + b, 0) / visualScores.length;
 
   let modelScore = 0;
+  let hasModelScore = false;
   if (quality === 'high') {
     const modelScores = await Promise.all(
       framePixels.map((px) => runMlModelScore(px, FRAME_ANALYSIS_SIZE, FRAME_ANALYSIS_SIZE))
@@ -208,10 +215,11 @@ async function analyzeVideoFrames(
     const usableScores = modelScores.filter((s): s is number => typeof s === 'number');
     if (usableScores.length > 0) {
       modelScore = usableScores.reduce((a, b) => a + b, 0) / usableScores.length;
+      hasModelScore = true;
     }
   }
 
-  return { frames: frameDataUrls, temporalScore, visualScore, modelScore };
+  return { frames: frameDataUrls, temporalScore, visualScore, modelScore, hasModelScore };
 }
 
 function scoreToConfidence(score: number): DetectionResult['confidence'] {
@@ -244,6 +252,7 @@ export class VideoDetector implements Detector {
     let temporalScore = 0;
     let videoVisualScore = 0;
     let videoModelScore = 0;
+    let hasVideoModelScore = false;
     let capturedFrames: string[] = [];
     if (video) {
       try {
@@ -251,6 +260,7 @@ export class VideoDetector implements Detector {
         temporalScore = analysis.temporalScore;
         videoVisualScore = analysis.visualScore;
         videoModelScore = analysis.modelScore;
+        hasVideoModelScore = analysis.hasModelScore;
         capturedFrames = analysis.frames;
 
         // Blend temporal and visual signals into local score.
@@ -258,8 +268,13 @@ export class VideoDetector implements Detector {
         // meaningful weight when there is no URL match.
         const temporalBoost = Math.min(0.3, temporalScore);
         const visualBoost = videoVisualScore * 0.35;
-        const modelBoost = videoModelScore * 0.45;
-        finalScore = Math.min(1, localScore + temporalBoost + visualBoost + modelBoost);
+        if (options.detectionQuality === 'high' && hasVideoModelScore) {
+          // In high mode, use bundled model output as the primary frame-level decision.
+          finalScore = videoModelScore;
+        } else {
+          const modelBoost = videoModelScore * 0.45;
+          finalScore = Math.min(1, localScore + temporalBoost + visualBoost + modelBoost);
+        }
       } catch {
         // Frame analysis failed — continue with URL score only
       }

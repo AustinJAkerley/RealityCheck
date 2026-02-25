@@ -21,7 +21,7 @@ describe('Nonescape mini adapter', () => {
     const pixels = new Uint8ClampedArray([10, 20, 30, 255, 40, 50, 60, 255]);
     const score = await runner.run(pixels, 2, 1);
 
-    expect(score).toBeCloseTo(0.23, 5);
+    expect(score).toBeCloseTo(0.05, 5);
     expect(predict).toHaveBeenCalledTimes(1);
     expect(predict).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -29,5 +29,15 @@ describe('Nonescape mini adapter', () => {
         height: 1,
       })
     );
+  });
+
+  test('returns strong AI class score when model predicts AI', async () => {
+    const runner = createNonescapeMiniRunner({
+      api: {
+        predict: () => 0.91,
+      },
+    });
+    const score = await runner.run(new Uint8ClampedArray([1, 2, 3, 255]), 1, 1);
+    expect(score).toBe(0.95);
   });
 });
