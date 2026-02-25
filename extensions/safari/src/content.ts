@@ -23,6 +23,7 @@ import {
   applyTextWatermark,
   WatermarkHandle,
 } from '@reality-check/core';
+import type { ContentType, RemotePayload, RemoteClassificationResult } from '@reality-check/core';
 
 const pipeline = new DetectionPipeline();
 
@@ -70,8 +71,23 @@ function getDetectorOptions(settings: ExtensionSettings): DetectorOptions {
     remoteEnabled: settings.remoteEnabled,
     detectionQuality: settings.detectionQuality,
     remoteEndpoint: settings.remoteEndpoint || undefined,
-    // Fetch image bytes via the background service worker, which is not
-    // subject to CORS restrictions, enabling EXIF/C2PA analysis on cross-origin images.
+    remoteApiKey: settings.remoteApiKey || undefined,
+    remoteClassify: (
+      endpoint: string,
+      apiKey: string,
+      contentType: ContentType,
+      payload: RemotePayload
+    ): Promise<RemoteClassificationResult> =>
+      browser.runtime
+        .sendMessage({
+          type: 'REMOTE_CLASSIFY',
+          payload: { endpoint, apiKey, contentType, payload },
+        })
+        .then((response: unknown) => {
+          const resp = response as { ok: boolean; result?: RemoteClassificationResult; error?: string } | undefined;
+          if (!resp?.ok) throw new Error(resp?.error ?? 'Remote classify failed');
+          return resp.result!;
+        }),
     fetchBytes: (url: string) =>
       browser.runtime
         .sendMessage({ type: 'FETCH_IMAGE_BYTES', payload: url })

@@ -23,6 +23,10 @@
  */
 import { Router, Request, Response } from 'express';
 import { analyzeImage } from '../analysis/image-analyzer';
+import {
+  getAzureOpenAIConfig,
+  classifyImageWithAzureOpenAI,
+} from '../analysis/openai-classifier';
 
 export const classifyRouter = Router();
 
@@ -42,7 +46,7 @@ const MAX_HASH_LENGTH = 128;
 /** Maximum accepted image URL length. */
 const MAX_URL_LENGTH = 2048;
 
-classifyRouter.post('/', (req: Request, res: Response) => {
+classifyRouter.post('/', async (req: Request, res: Response) => {
   const body = req.body as Record<string, unknown>;
 
   const { contentType, imageDataUrl, imageHash, imageUrl } = body;
@@ -88,9 +92,26 @@ classifyRouter.post('/', (req: Request, res: Response) => {
   }
 
   // ── Analyse ──────────────────────────────────────────────────────────────
-  // Only image analysis is implemented in this version; other content types
-  // return a neutral uncertain score and will be enhanced in future iterations.
+  // For image content: try Azure OpenAI vision first (when configured), then
+  // fall back to the heuristic analyzeImage implementation.
+  // Other content types return a neutral uncertain score and will be enhanced
+  // in future iterations.
   if (contentType === 'image') {
+    const azureConfig = getAzureOpenAIConfig();
+    if (azureConfig) {
+      try {
+        const result = await classifyImageWithAzureOpenAI(
+          azureConfig,
+          typeof imageDataUrl === 'string' ? imageDataUrl : undefined,
+          typeof imageUrl === 'string' ? imageUrl : undefined
+        );
+        res.json({ score: result.score, label: result.label });
+        return;
+      } catch {
+        // Azure OpenAI call failed — fall through to heuristic analysis
+      }
+    }
+
     const result = analyzeImage(
       typeof imageDataUrl === 'string' ? imageDataUrl : undefined,
       typeof imageHash === 'string' ? imageHash : undefined,
