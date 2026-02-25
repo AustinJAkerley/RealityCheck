@@ -108,12 +108,15 @@ export class OpenAIAdapter implements RemoteAdapter {
 }
 
 /**
- * Azure OpenAI adapter — uses the Azure OpenAI Service endpoint format.
+ * Azure OpenAI adapter — supports both Azure OpenAI Service and Azure API Management
+ * (APIM) gateway endpoints.
  *
- * Endpoint format:
- *   https://{resource}.openai.azure.com/
- * The deployment name and API version are extracted from the URL or provided
- * via constructor parameters.
+ * `baseUrl` must include the `/openai` path segment when applicable, e.g.:
+ *   https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai  (APIM)
+ *   https://{resource}.openai.azure.com/openai                     (direct)
+ *
+ * The chat completions URL is constructed as:
+ *   {baseUrl}/deployments/{deployment}/chat/completions?api-version={version}
  *
  * Authentication uses the `api-key` header (Azure-specific) rather than
  * the standard `Authorization: Bearer` header.
@@ -129,7 +132,7 @@ export class AzureOpenAIAdapter implements RemoteAdapter {
     private readonly apiKey: string,
     baseUrl: string,
     deployment = 'gpt-5-1-chat',
-    apiVersion = '2024-02-01'
+    apiVersion = '2024-10-21'
   ) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.deployment = deployment;
@@ -181,7 +184,7 @@ export class AzureOpenAIAdapter implements RemoteAdapter {
     }
 
     const url =
-      `${this.baseUrl}/openai/deployments/${this.deployment}` +
+      `${this.baseUrl}/deployments/${this.deployment}` +
       `/chat/completions?api-version=${this.apiVersion}`;
 
     const response = await fetch(url, {
@@ -222,7 +225,7 @@ export class AzureOpenAIAdapter implements RemoteAdapter {
  * Create the appropriate remote adapter.
  * When endpoint is empty or omitted, falls back to DEFAULT_REMOTE_ENDPOINT (no auth).
  * Adapter selection (most-specific first):
- *  1. `*.openai.azure.com` → AzureOpenAIAdapter
+ *  1. `*.openai.azure.com` or `*.azure-api.net` → AzureOpenAIAdapter
  *  2. `api.openai.com` or `*.openai.com` → OpenAIAdapter
  *  3. Everything else → GenericHttpAdapter (default)
  */
@@ -233,7 +236,7 @@ export function createRemoteAdapter(
   const url = endpoint.trim() || DEFAULT_REMOTE_ENDPOINT;
   try {
     const { hostname } = new URL(url);
-    if (hostname.endsWith('.openai.azure.com')) {
+    if (hostname.endsWith('.openai.azure.com') || hostname.endsWith('.azure-api.net')) {
       return new AzureOpenAIAdapter(apiKey, url);
     }
     if (hostname === 'api.openai.com' || hostname.endsWith('.openai.com')) {

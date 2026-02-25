@@ -4,16 +4,17 @@
  * Uses GPT-4o vision to determine whether an image is AI-generated.
  * Activated when the following environment variables are present:
  *
- *   AZURE_OPENAI_ENDPOINT    — e.g. https://myhackathon.openai.azure.com
+ *   AZURE_OPENAI_ENDPOINT    — Base URL including the /openai path, e.g.
+ *                              https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai
  *   AZURE_OPENAI_API_KEY     — Azure OpenAI resource key
  *   AZURE_OPENAI_DEPLOYMENT  — model deployment name (default: gpt-5-1-chat)
- *   AZURE_OPENAI_API_VERSION — API version (default: 2024-02-01)
+ *   AZURE_OPENAI_API_VERSION — API version (default: 2024-10-21)
  *
  * When these variables are not set, the function is a no-op and the caller
  * falls back to the heuristic `analyzeImage` implementation.
  *
- * Azure OpenAI chat completions endpoint format:
- *   POST https://{resource}.openai.azure.com/openai/deployments/{deployment}/chat/completions
+ * Chat completions endpoint format:
+ *   POST {AZURE_OPENAI_ENDPOINT}/deployments/{deployment}/chat/completions
  *        ?api-version={version}
  * Authentication header: `api-key: {key}` (Azure-specific, not `Authorization: Bearer`).
  */
@@ -39,7 +40,7 @@ export function getAzureOpenAIConfig(): AzureOpenAIConfig | null {
     endpoint,
     apiKey,
     deployment: process.env.AZURE_OPENAI_DEPLOYMENT?.trim() || 'gpt-5-1-chat',
-    apiVersion: process.env.AZURE_OPENAI_API_VERSION?.trim() || '2024-02-01',
+    apiVersion: process.env.AZURE_OPENAI_API_VERSION?.trim() || '2024-10-21',
   };
 }
 
@@ -82,7 +83,7 @@ export async function classifyImageWithAzureOpenAI(
   });
 
   const chatUrl =
-    `${config.endpoint.replace(/\/$/, '')}/openai/deployments/${config.deployment}` +
+    `${config.endpoint.replace(/\/$/, '')}/deployments/${config.deployment}` +
     `/chat/completions?api-version=${config.apiVersion}`;
 
   const response = await fetch(chatUrl, {

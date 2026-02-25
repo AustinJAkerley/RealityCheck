@@ -48,7 +48,15 @@ describe('createRemoteAdapter', () => {
   });
 
   test('returns AzureOpenAIAdapter for *.openai.azure.com', () => {
-    const adapter = createRemoteAdapter('https://hackathon.openai.azure.com', 'key');
+    const adapter = createRemoteAdapter('https://hackathon.openai.azure.com/openai', 'key');
+    expect(adapter).toBeInstanceOf(AzureOpenAIAdapter);
+  });
+
+  test('returns AzureOpenAIAdapter for *.azure-api.net (APIM)', () => {
+    const adapter = createRemoteAdapter(
+      'https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai',
+      'key'
+    );
     expect(adapter).toBeInstanceOf(AzureOpenAIAdapter);
   });
 
@@ -106,7 +114,7 @@ describe('GenericHttpAdapter', () => {
 // ── AzureOpenAIAdapter ────────────────────────────────────────────────────────
 
 describe('AzureOpenAIAdapter', () => {
-  const azureEndpoint = 'https://hackathon.openai.azure.com';
+  const azureEndpoint = 'https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai';
   const apiKey = 'azure-key-123';
 
   test('uses api-key header (not Authorization: Bearer)', async () => {
@@ -129,7 +137,7 @@ describe('AzureOpenAIAdapter', () => {
     await adapter.classify('image', { imageDataUrl: TINY_PNG });
 
     const url = spy.mock.calls[0][0] as string;
-    expect(url).toContain('/openai/deployments/my-deployment/chat/completions');
+    expect(url).toContain('/deployments/my-deployment/chat/completions');
     expect(url).toContain('api-version=2024-05-01');
   });
 
@@ -141,7 +149,7 @@ describe('AzureOpenAIAdapter', () => {
     await adapter.classify('image', { imageDataUrl: TINY_PNG });
 
     const url = spy.mock.calls[0][0] as string;
-    expect(url).not.toContain('//openai');
+    expect(url).not.toContain('//deployments');
   });
 
   test('returns ai classification result', async () => {

@@ -24,7 +24,7 @@ describe('getAzureOpenAIConfig', () => {
   });
 
   test('returns null when only endpoint is set', () => {
-    process.env.AZURE_OPENAI_ENDPOINT = 'https://test.openai.azure.com';
+    process.env.AZURE_OPENAI_ENDPOINT = 'https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai';
     expect(getAzureOpenAIConfig()).toBeNull();
   });
 
@@ -34,18 +34,18 @@ describe('getAzureOpenAIConfig', () => {
   });
 
   test('returns config with defaults when required vars are set', () => {
-    process.env.AZURE_OPENAI_ENDPOINT = 'https://test.openai.azure.com';
+    process.env.AZURE_OPENAI_ENDPOINT = 'https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai';
     process.env.AZURE_OPENAI_API_KEY = 'mykey';
     const config = getAzureOpenAIConfig();
     expect(config).not.toBeNull();
-    expect(config!.endpoint).toBe('https://test.openai.azure.com');
+    expect(config!.endpoint).toBe('https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai');
     expect(config!.apiKey).toBe('mykey');
     expect(config!.deployment).toBe('gpt-5-1-chat');
-    expect(config!.apiVersion).toBe('2024-02-01');
+    expect(config!.apiVersion).toBe('2024-10-21');
   });
 
   test('uses custom deployment and api version when set', () => {
-    process.env.AZURE_OPENAI_ENDPOINT = 'https://test.openai.azure.com';
+    process.env.AZURE_OPENAI_ENDPOINT = 'https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai';
     process.env.AZURE_OPENAI_API_KEY = 'mykey';
     process.env.AZURE_OPENAI_DEPLOYMENT = 'gpt-4-vision';
     process.env.AZURE_OPENAI_API_VERSION = '2024-05-01-preview';
@@ -57,10 +57,10 @@ describe('getAzureOpenAIConfig', () => {
 
 describe('classifyImageWithAzureOpenAI', () => {
   const mockConfig: AzureOpenAIConfig = {
-    endpoint: 'https://hackathon.openai.azure.com',
+    endpoint: 'https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai',
     apiKey: 'test-api-key',
     deployment: 'gpt-5-1-chat',
-    apiVersion: '2024-02-01',
+    apiVersion: '2024-10-21',
   };
 
   afterEach(() => {
@@ -83,9 +83,9 @@ describe('classifyImageWithAzureOpenAI', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [calledUrl, calledInit] = fetchSpy.mock.calls[0];
     expect(typeof calledUrl).toBe('string');
-    expect((calledUrl as string)).toContain('hackathon.openai.azure.com');
-    expect((calledUrl as string)).toContain('/openai/deployments/gpt-5-1-chat/chat/completions');
-    expect((calledUrl as string)).toContain('api-version=2024-02-01');
+    expect((calledUrl as string)).toContain('hackathon2026-apim-chffbmwwvr7u2.azure-api.net');
+    expect((calledUrl as string)).toContain('/deployments/gpt-5-1-chat/chat/completions');
+    expect((calledUrl as string)).toContain('api-version=2024-10-21');
     const headers = (calledInit as RequestInit).headers as Record<string, string>;
     expect(headers['api-key']).toBe('test-api-key');
     expect(headers['Content-Type']).toBe('application/json');
@@ -171,7 +171,7 @@ describe('classifyImageWithAzureOpenAI', () => {
   test('includes trailing-slash-stripped endpoint in URL', async () => {
     const configWithTrailingSlash: AzureOpenAIConfig = {
       ...mockConfig,
-      endpoint: 'https://hackathon.openai.azure.com/',
+      endpoint: 'https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai/',
     };
     const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
       ok: true,
@@ -182,6 +182,6 @@ describe('classifyImageWithAzureOpenAI', () => {
 
     await classifyImageWithAzureOpenAI(configWithTrailingSlash, TINY_PNG_DATA_URL, undefined);
     const calledUrl = fetchSpy.mock.calls[0][0] as string;
-    expect(calledUrl).not.toContain('//openai');
+    expect(calledUrl).not.toContain('//deployments');
   });
 });
