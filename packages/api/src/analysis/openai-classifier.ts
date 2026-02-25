@@ -1,21 +1,19 @@
 /**
  * Azure OpenAI-based image classifier for the RealityCheck API backend.
  *
- * Uses GPT-4o vision to determine whether an image is AI-generated.
+ * Uses the Azure OpenAI Responses API to determine whether an image is AI-generated.
  * Activated when the following environment variables are present:
  *
  *   AZURE_OPENAI_ENDPOINT    — Base URL including the /openai path, e.g.
  *                              https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai
- *   AZURE_OPENAI_API_KEY     — Azure OpenAI resource key
+ *   AZURE_OPENAI_API_KEY     — Bearer token for APIM gateway authentication
  *   AZURE_OPENAI_DEPLOYMENT  — model deployment name (default: gpt-5-1-chat)
- *   AZURE_OPENAI_API_VERSION — API version (default: 2024-10-21)
  *
  * When these variables are not set, the function is a no-op and the caller
  * falls back to the heuristic `analyzeImage` implementation.
  *
- * Chat completions endpoint format:
- *   POST {AZURE_OPENAI_ENDPOINT}/deployments/{deployment}/chat/completions
- *        ?api-version={version}
+ * Responses API endpoint format:
+ *   POST {AZURE_OPENAI_ENDPOINT}/v1/responses
  * Authentication header: `Authorization: Bearer {key}` (APIM gateway format).
  */
 
@@ -23,7 +21,6 @@ export interface AzureOpenAIConfig {
   endpoint: string;
   apiKey: string;
   deployment: string;
-  apiVersion: string;
 }
 
 /**
@@ -40,7 +37,6 @@ export function getAzureOpenAIConfig(): AzureOpenAIConfig | null {
     endpoint,
     apiKey,
     deployment: process.env.AZURE_OPENAI_DEPLOYMENT?.trim() || 'gpt-5-1-chat',
-    apiVersion: process.env.AZURE_OPENAI_API_VERSION?.trim() || '2024-10-21',
   };
 }
 
@@ -50,7 +46,7 @@ export interface OpenAIClassificationResult {
 }
 
 /**
- * Classify an image using Azure OpenAI GPT-4o vision.
+ * Classify an image using Azure OpenAI Responses API (vision).
  *
  * @param config        Azure OpenAI configuration.
  * @param imageDataUrl  Base64 data-URL of the (down-scaled) image, passed to the vision model.
@@ -73,32 +69,45 @@ export async function classifyImageWithAzureOpenAI(
 
   const userContent: unknown[] = [];
   if (imageDataUrl) {
-    userContent.push({ type: 'image_url', image_url: { url: imageDataUrl } });
+    userContent.push({ type: 'input_image', image_url: imageDataUrl });
   }
   userContent.push({
-    type: 'text',
+    type: 'input_text',
     text: imageUrl
       ? `Image source URL: ${imageUrl}\nIs this image AI-generated? Respond with JSON only.`
       : 'Is this image AI-generated? Respond with JSON only.',
   });
 
-  const chatUrl =
-    `${config.endpoint.replace(/\/$/, '')}/deployments/${config.deployment}` +
-    `/chat/completions?api-version=${config.apiVersion}`;
+  const responsesUrl = `${config.endpoint.replace(/\/$/, '')}/v1/responses`;
 
-  const response = await fetch(chatUrl, {
+  const response = await fetch(responsesUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${config.apiKey}`,
     },
     body: JSON.stringify({
-      messages: [
+      model: config.deployment,
+      input: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userContent },
       ],
-      response_format: { type: 'json_object' },
-      max_tokens: 64,
+      text: {
+        format: {
+          type: 'json_schema',
+          name: 'AIDetectionResult',
+          schema: {
+            type: 'object',
+            properties: {
+              score: { type: 'number' },
+              label: { type: 'string' },
+            },
+            required: ['score', 'label'],
+            additionalProperties: false,
+          },
+          strict: true,
+        },
+      },
     }),
   });
 
@@ -106,10 +115,20 @@ export async function classifyImageWithAzureOpenAI(
     throw new Error(`Azure OpenAI HTTP ${response.status}: ${response.statusText}`);
   }
 
+  // Responses API returns: { output: [{ type: "message", content: [{ type: "output_text", text: "..." }] }] }
   const data = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
+    output?: Array<{
+      type?: string;
+      content?: Array<{ type?: string; text?: string }>;
+    }>;
+    output_text?: string;
   };
-  const raw = data?.choices?.[0]?.message?.content ?? '{}';
+
+  const raw =
+    data.output_text ??
+    data.output?.find((o) => o.type === 'message')?.content?.find((c) => c.type === 'output_text')?.text ??
+    '{}';
+
   let parsed: { score?: unknown; label?: unknown };
   try {
     parsed = JSON.parse(raw) as { score?: unknown; label?: unknown };

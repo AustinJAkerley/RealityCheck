@@ -14,11 +14,10 @@
  *   AZURE_OPENAI_ENDPOINT    — Azure OpenAI base URL (including the /openai path), e.g.
  *                              https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai
  *                              When set together with AZURE_OPENAI_API_KEY, image
- *                              classification is performed by GPT-4o vision instead
- *                              of the built-in heuristic analyser.
- *   AZURE_OPENAI_API_KEY     — Azure OpenAI resource key.
+ *                              classification uses the Azure OpenAI Responses API
+ *                              instead of the built-in heuristic analyser.
+ *   AZURE_OPENAI_API_KEY     — Bearer token for APIM gateway authentication.
  *   AZURE_OPENAI_DEPLOYMENT  — Model deployment name (default: gpt-5-1-chat).
- *   AZURE_OPENAI_API_VERSION — Azure OpenAI API version (default: 2024-10-21).
  */
 import { createApp } from './app';
 

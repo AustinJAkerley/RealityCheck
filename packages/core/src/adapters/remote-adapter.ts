@@ -109,57 +109,54 @@ export class OpenAIAdapter implements RemoteAdapter {
 
 /**
  * Azure OpenAI adapter — supports both Azure OpenAI Service and Azure API Management
- * (APIM) gateway endpoints.
+ * (APIM) gateway endpoints, using the **Responses API** format.
  *
  * `baseUrl` must include the `/openai` path segment when applicable, e.g.:
  *   https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai  (APIM)
  *   https://{resource}.openai.azure.com/openai                     (direct)
  *
- * The chat completions URL is constructed as:
- *   {baseUrl}/deployments/{deployment}/chat/completions?api-version={version}
+ * The Responses API URL is constructed as:
+ *   {baseUrl}/v1/responses
  *
  * Authentication uses the `Authorization: Bearer` header, which is the format
  * expected by Azure API Management (APIM) gateways.
  *
- * Supports both image (GPT-4o vision) and text classification.
+ * Supports both image (vision via input_image) and text classification.
  */
 export class AzureOpenAIAdapter implements RemoteAdapter {
   private readonly baseUrl: string;
   private readonly deployment: string;
-  private readonly apiVersion: string;
 
   constructor(
     private readonly apiKey: string,
     baseUrl: string,
     deployment = 'gpt-5-1-chat',
-    apiVersion = '2024-10-21'
   ) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.deployment = deployment;
-    this.apiVersion = apiVersion;
   }
 
   async classify(
     contentType: ContentType,
     payload: RemotePayload
   ): Promise<RemoteClassificationResult> {
-    let messages: unknown[];
+    let input: unknown[];
 
     if (contentType === 'image') {
       const userContent: unknown[] = [];
       if (payload.imageDataUrl) {
-        userContent.push({ type: 'image_url', image_url: { url: payload.imageDataUrl } });
+        userContent.push({ type: 'input_image', image_url: payload.imageDataUrl });
       } else if (payload.imageUrl) {
         // Cross-origin images can't be canvas-encoded; pass the URL directly so the
         // vision model can fetch it (OpenAI vision supports URL inputs natively).
-        userContent.push({ type: 'image_url', image_url: { url: payload.imageUrl } });
+        userContent.push({ type: 'input_image', image_url: payload.imageUrl });
       }
       userContent.push({
-        type: 'text',
-        text: 'Is this image AI-generated? Respond with JSON only.',
+        type: 'input_text',
+        text: 'Is this image AI-generated? Respond with JSON only: {"score": <0.0-1.0>, "label": "<ai|human|uncertain>"}',
       });
 
-      messages = [
+      input = [
         {
           role: 'system',
           content:
@@ -173,7 +170,7 @@ export class AzureOpenAIAdapter implements RemoteAdapter {
         { role: 'user', content: userContent },
       ];
     } else if (contentType === 'text' && payload.text) {
-      messages = [
+      input = [
         {
           role: 'system',
           content:
@@ -187,9 +184,7 @@ export class AzureOpenAIAdapter implements RemoteAdapter {
       return { score: 0.5, label: 'unsupported' };
     }
 
-    const url =
-      `${this.baseUrl}/deployments/${this.deployment}` +
-      `/chat/completions?api-version=${this.apiVersion}`;
+    const url = `${this.baseUrl}/v1/responses`;
 
     const response = await fetch(url, {
       method: 'POST',
@@ -198,9 +193,24 @@ export class AzureOpenAIAdapter implements RemoteAdapter {
         Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({
-        messages,
-        response_format: { type: 'json_object' },
-        max_tokens: 64,
+        model: this.deployment,
+        input,
+        text: {
+          format: {
+            type: 'json_schema',
+            name: 'AIDetectionResult',
+            schema: {
+              type: 'object',
+              properties: {
+                score: { type: 'number' },
+                label: { type: 'string' },
+              },
+              required: ['score', 'label'],
+              additionalProperties: false,
+            },
+            strict: true,
+          },
+        },
       }),
     });
 
@@ -208,10 +218,21 @@ export class AzureOpenAIAdapter implements RemoteAdapter {
       throw new Error(`Azure OpenAI API HTTP ${response.status}`);
     }
 
+    // Responses API returns: { output: [{ type: "message", content: [{ type: "output_text", text: "..." }] }] }
     const data = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
+      output?: Array<{
+        type?: string;
+        content?: Array<{ type?: string; text?: string }>;
+      }>;
+      output_text?: string;
     };
-    const raw = data?.choices?.[0]?.message?.content ?? '{}';
+
+    // Try output_text first (convenience field), then walk the output array
+    const raw =
+      data.output_text ??
+      data.output?.find((o) => o.type === 'message')?.content?.find((c) => c.type === 'output_text')?.text ??
+      '{}';
+
     let parsed: { score?: unknown; label?: unknown };
     try {
       parsed = JSON.parse(raw) as { score?: unknown; label?: unknown };

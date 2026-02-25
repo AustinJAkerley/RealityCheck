@@ -117,10 +117,16 @@ describe('AzureOpenAIAdapter', () => {
   const azureEndpoint = 'https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai';
   const apiKey = 'azure-key-123';
 
+  // Helper: mock a Responses API response
+  function mockResponsesApi(text: string, ok = true, status = 200): jest.SpyInstance {
+    return mockFetch({
+      output: [{ type: 'message', content: [{ type: 'output_text', text }] }],
+      output_text: text,
+    }, ok, status);
+  }
+
   test('uses Authorization: Bearer header', async () => {
-    const spy = mockFetch({
-      choices: [{ message: { content: '{"score":0.8,"label":"ai"}' } }],
-    });
+    const spy = mockResponsesApi('{"score":0.8,"label":"ai"}');
     const adapter = new AzureOpenAIAdapter(apiKey, azureEndpoint);
     await adapter.classify('image', { imageDataUrl: TINY_PNG });
 
@@ -129,31 +135,58 @@ describe('AzureOpenAIAdapter', () => {
     expect(headers['api-key']).toBeUndefined();
   });
 
-  test('calls correct Azure deployment URL with api-version', async () => {
-    const spy = mockFetch({
-      choices: [{ message: { content: '{"score":0.7,"label":"ai"}' } }],
-    });
-    const adapter = new AzureOpenAIAdapter(apiKey, azureEndpoint, 'my-deployment', '2024-05-01');
+  test('calls Responses API URL (/v1/responses)', async () => {
+    const spy = mockResponsesApi('{"score":0.7,"label":"ai"}');
+    const adapter = new AzureOpenAIAdapter(apiKey, azureEndpoint, 'my-deployment');
     await adapter.classify('image', { imageDataUrl: TINY_PNG });
 
     const url = spy.mock.calls[0][0] as string;
-    expect(url).toContain('/deployments/my-deployment/chat/completions');
-    expect(url).toContain('api-version=2024-05-01');
+    expect(url).toBe(`${azureEndpoint}/v1/responses`);
+    // Verify model is in the request body, not the URL
+    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.model).toBe('my-deployment');
+  });
+
+  test('sends input (not messages) with input_image and input_text types', async () => {
+    const spy = mockResponsesApi('{"score":0.8,"label":"ai"}');
+    const adapter = new AzureOpenAIAdapter(apiKey, azureEndpoint);
+    await adapter.classify('image', { imageDataUrl: TINY_PNG });
+
+    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.input).toBeDefined();
+    expect(body.messages).toBeUndefined();
+    // Check user content uses Responses API types
+    const userInput = body.input[1];
+    expect(userInput.role).toBe('user');
+    const imgPart = userInput.content[0];
+    expect(imgPart.type).toBe('input_image');
+    expect(imgPart.image_url).toBe(TINY_PNG);
+    const textPart = userInput.content[1];
+    expect(textPart.type).toBe('input_text');
+  });
+
+  test('uses json_schema text format for structured output', async () => {
+    const spy = mockResponsesApi('{"score":0.8,"label":"ai"}');
+    const adapter = new AzureOpenAIAdapter(apiKey, azureEndpoint);
+    await adapter.classify('image', { imageDataUrl: TINY_PNG });
+
+    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.text.format.type).toBe('json_schema');
+    expect(body.text.format.name).toBe('AIDetectionResult');
+    expect(body.text.format.strict).toBe(true);
   });
 
   test('strips trailing slash from base URL', async () => {
-    const spy = mockFetch({
-      choices: [{ message: { content: '{"score":0.5,"label":"uncertain"}' } }],
-    });
+    const spy = mockResponsesApi('{"score":0.5,"label":"uncertain"}');
     const adapter = new AzureOpenAIAdapter(apiKey, `${azureEndpoint}/`);
     await adapter.classify('image', { imageDataUrl: TINY_PNG });
 
     const url = spy.mock.calls[0][0] as string;
-    expect(url).not.toContain('//deployments');
+    expect(url).toBe(`${azureEndpoint}/v1/responses`);
   });
 
   test('returns ai classification result', async () => {
-    mockFetch({ choices: [{ message: { content: '{"score":0.9,"label":"ai"}' } }] });
+    mockResponsesApi('{"score":0.9,"label":"ai"}');
     const adapter = new AzureOpenAIAdapter(apiKey, azureEndpoint);
     const result = await adapter.classify('image', { imageDataUrl: TINY_PNG });
     expect(result.score).toBeCloseTo(0.9);
@@ -161,14 +194,14 @@ describe('AzureOpenAIAdapter', () => {
   });
 
   test('clamps score to [0, 1]', async () => {
-    mockFetch({ choices: [{ message: { content: '{"score":99,"label":"ai"}' } }] });
+    mockResponsesApi('{"score":99,"label":"ai"}');
     const adapter = new AzureOpenAIAdapter(apiKey, azureEndpoint);
     const result = await adapter.classify('image', { imageDataUrl: TINY_PNG });
     expect(result.score).toBe(1);
   });
 
   test('handles text content type', async () => {
-    mockFetch({ choices: [{ message: { content: '{"score":0.95,"label":"ai"}' } }] });
+    mockResponsesApi('{"score":0.95,"label":"ai"}');
     const adapter = new AzureOpenAIAdapter(apiKey, azureEndpoint);
     const result = await adapter.classify('text', { text: 'This is sample text.' });
     expect(result.score).toBeCloseTo(0.95);
@@ -183,15 +216,37 @@ describe('AzureOpenAIAdapter', () => {
   });
 
   test('falls back to uncertain for malformed JSON from model', async () => {
-    mockFetch({ choices: [{ message: { content: 'not-json' } }] });
+    mockResponsesApi('not-json');
     const adapter = new AzureOpenAIAdapter(apiKey, azureEndpoint);
     const result = await adapter.classify('image', { imageDataUrl: TINY_PNG });
     expect(result.score).toBe(0.5);
     expect(result.label).toBe('uncertain');
   });
 
+  test('parses output array when output_text is missing', async () => {
+    mockFetch({
+      output: [{ type: 'message', content: [{ type: 'output_text', text: '{"score":0.6,"label":"uncertain"}' }] }],
+    });
+    const adapter = new AzureOpenAIAdapter(apiKey, azureEndpoint);
+    const result = await adapter.classify('image', { imageDataUrl: TINY_PNG });
+    expect(result.score).toBeCloseTo(0.6);
+    expect(result.label).toBe('uncertain');
+  });
+
+  test('passes imageUrl when imageDataUrl is not available', async () => {
+    const spy = mockResponsesApi('{"score":0.5,"label":"uncertain"}');
+    const adapter = new AzureOpenAIAdapter(apiKey, azureEndpoint);
+    await adapter.classify('image', { imageUrl: 'https://example.com/photo.jpg' });
+
+    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+    const userInput = body.input[1];
+    const imgPart = userInput.content[0];
+    expect(imgPart.type).toBe('input_image');
+    expect(imgPart.image_url).toBe('https://example.com/photo.jpg');
+  });
+
   test('throws on non-2xx Azure response', async () => {
-    mockFetch({}, false, 401);
+    mockResponsesApi('{}', false, 401);
     const adapter = new AzureOpenAIAdapter(apiKey, azureEndpoint);
     await expect(adapter.classify('image', { imageDataUrl: TINY_PNG })).rejects.toThrow(
       'Azure OpenAI API HTTP 401'

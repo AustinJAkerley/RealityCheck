@@ -11,12 +11,19 @@ import {
 const TINY_PNG_DATA_URL =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
+// Helper: create a mock Responses API response
+function responsesApiResponse(text: string) {
+  return {
+    output: [{ type: 'message', content: [{ type: 'output_text', text }] }],
+    output_text: text,
+  };
+}
+
 describe('getAzureOpenAIConfig', () => {
   afterEach(() => {
     delete process.env.AZURE_OPENAI_ENDPOINT;
     delete process.env.AZURE_OPENAI_API_KEY;
     delete process.env.AZURE_OPENAI_DEPLOYMENT;
-    delete process.env.AZURE_OPENAI_API_VERSION;
   });
 
   test('returns null when env vars are not set', () => {
@@ -41,17 +48,14 @@ describe('getAzureOpenAIConfig', () => {
     expect(config!.endpoint).toBe('https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai');
     expect(config!.apiKey).toBe('mykey');
     expect(config!.deployment).toBe('gpt-5-1-chat');
-    expect(config!.apiVersion).toBe('2024-10-21');
   });
 
-  test('uses custom deployment and api version when set', () => {
+  test('uses custom deployment when set', () => {
     process.env.AZURE_OPENAI_ENDPOINT = 'https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai';
     process.env.AZURE_OPENAI_API_KEY = 'mykey';
     process.env.AZURE_OPENAI_DEPLOYMENT = 'gpt-4-vision';
-    process.env.AZURE_OPENAI_API_VERSION = '2024-05-01-preview';
     const config = getAzureOpenAIConfig();
     expect(config!.deployment).toBe('gpt-4-vision');
-    expect(config!.apiVersion).toBe('2024-05-01-preview');
   });
 });
 
@@ -60,43 +64,55 @@ describe('classifyImageWithAzureOpenAI', () => {
     endpoint: 'https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai',
     apiKey: 'test-api-key',
     deployment: 'gpt-5-1-chat',
-    apiVersion: '2024-10-21',
   };
 
   afterEach(() => {
     jest.restoreAllMocks();
   });
 
-  test('calls the correct Azure OpenAI endpoint', async () => {
-    const mockResponse = {
+  test('calls the Responses API endpoint', async () => {
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
       ok: true,
-      json: async () => ({
-        choices: [{ message: { content: '{"score":0.9,"label":"ai"}' } }],
-      }),
-    };
-    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue(
-      mockResponse as unknown as Response
-    );
+      json: async () => responsesApiResponse('{"score":0.9,"label":"ai"}'),
+    } as unknown as Response);
 
     await classifyImageWithAzureOpenAI(mockConfig, TINY_PNG_DATA_URL, undefined);
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [calledUrl, calledInit] = fetchSpy.mock.calls[0];
     expect(typeof calledUrl).toBe('string');
-    expect((calledUrl as string)).toContain('hackathon2026-apim-chffbmwwvr7u2.azure-api.net');
-    expect((calledUrl as string)).toContain('/deployments/gpt-5-1-chat/chat/completions');
-    expect((calledUrl as string)).toContain('api-version=2024-10-21');
+    expect((calledUrl as string)).toBe(
+      'https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai/v1/responses'
+    );
     const headers = (calledInit as RequestInit).headers as Record<string, string>;
     expect(headers['Authorization']).toBe('Bearer test-api-key');
     expect(headers['Content-Type']).toBe('application/json');
+    // Verify request body uses Responses API format
+    const body = JSON.parse((calledInit as RequestInit).body as string);
+    expect(body.model).toBe('gpt-5-1-chat');
+    expect(body.input).toBeDefined();
+    expect(body.messages).toBeUndefined();
+  });
+
+  test('sends input_image and input_text types', async () => {
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => responsesApiResponse('{"score":0.9,"label":"ai"}'),
+    } as unknown as Response);
+
+    await classifyImageWithAzureOpenAI(mockConfig, TINY_PNG_DATA_URL, undefined);
+
+    const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
+    const userInput = body.input[1];
+    expect(userInput.content[0].type).toBe('input_image');
+    expect(userInput.content[0].image_url).toBe(TINY_PNG_DATA_URL);
+    expect(userInput.content[1].type).toBe('input_text');
   });
 
   test('returns ai label when score is high', async () => {
     jest.spyOn(global, 'fetch').mockResolvedValue({
       ok: true,
-      json: async () => ({
-        choices: [{ message: { content: '{"score":0.9,"label":"ai"}' } }],
-      }),
+      json: async () => responsesApiResponse('{"score":0.9,"label":"ai"}'),
     } as unknown as Response);
 
     const result = await classifyImageWithAzureOpenAI(mockConfig, TINY_PNG_DATA_URL, undefined);
@@ -107,9 +123,7 @@ describe('classifyImageWithAzureOpenAI', () => {
   test('returns human label when score is low', async () => {
     jest.spyOn(global, 'fetch').mockResolvedValue({
       ok: true,
-      json: async () => ({
-        choices: [{ message: { content: '{"score":0.1,"label":"human"}' } }],
-      }),
+      json: async () => responsesApiResponse('{"score":0.1,"label":"human"}'),
     } as unknown as Response);
 
     const result = await classifyImageWithAzureOpenAI(mockConfig, TINY_PNG_DATA_URL, undefined);
@@ -120,9 +134,7 @@ describe('classifyImageWithAzureOpenAI', () => {
   test('returns uncertain label for ambiguous scores', async () => {
     jest.spyOn(global, 'fetch').mockResolvedValue({
       ok: true,
-      json: async () => ({
-        choices: [{ message: { content: '{"score":0.5,"label":"uncertain"}' } }],
-      }),
+      json: async () => responsesApiResponse('{"score":0.5,"label":"uncertain"}'),
     } as unknown as Response);
 
     const result = await classifyImageWithAzureOpenAI(mockConfig, undefined, 'https://example.com/photo.jpg');
@@ -133,9 +145,7 @@ describe('classifyImageWithAzureOpenAI', () => {
   test('clamps score to [0, 1]', async () => {
     jest.spyOn(global, 'fetch').mockResolvedValue({
       ok: true,
-      json: async () => ({
-        choices: [{ message: { content: '{"score":2.5,"label":"ai"}' } }],
-      }),
+      json: async () => responsesApiResponse('{"score":2.5,"label":"ai"}'),
     } as unknown as Response);
 
     const result = await classifyImageWithAzureOpenAI(mockConfig, TINY_PNG_DATA_URL, undefined);
@@ -145,9 +155,7 @@ describe('classifyImageWithAzureOpenAI', () => {
   test('falls back to score 0.5 / uncertain for malformed JSON response', async () => {
     jest.spyOn(global, 'fetch').mockResolvedValue({
       ok: true,
-      json: async () => ({
-        choices: [{ message: { content: 'not valid json' } }],
-      }),
+      json: async () => responsesApiResponse('not valid json'),
     } as unknown as Response);
 
     const result = await classifyImageWithAzureOpenAI(mockConfig, TINY_PNG_DATA_URL, undefined);
@@ -175,13 +183,13 @@ describe('classifyImageWithAzureOpenAI', () => {
     };
     const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
       ok: true,
-      json: async () => ({
-        choices: [{ message: { content: '{"score":0.8,"label":"ai"}' } }],
-      }),
+      json: async () => responsesApiResponse('{"score":0.8,"label":"ai"}'),
     } as unknown as Response);
 
     await classifyImageWithAzureOpenAI(configWithTrailingSlash, TINY_PNG_DATA_URL, undefined);
     const calledUrl = fetchSpy.mock.calls[0][0] as string;
-    expect(calledUrl).not.toContain('//deployments');
+    expect(calledUrl).toBe(
+      'https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai/v1/responses'
+    );
   });
 });
