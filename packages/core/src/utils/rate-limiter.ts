@@ -34,6 +34,11 @@ export class RateLimiter {
     return true;
   }
 
+  /** Return tokens that were consumed but not actually used (e.g. a failed API call). */
+  returnToken(count = 1): void {
+    this.tokens = Math.min(this.maxTokens, this.tokens + count);
+  }
+
   get remainingTokens(): number {
     this.refill();
     return this.tokens;

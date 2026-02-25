@@ -96,7 +96,7 @@ function scoreToConfidence(score: number): DetectionResult['confidence'] {
 export class AudioDetector implements Detector {
   readonly contentType = 'audio' as const;
   private readonly cache = new DetectionCache<DetectionResult>();
-  private readonly rateLimiter = new RateLimiter(10, 60_000);
+  private readonly rateLimiter = new RateLimiter(60, 60_000);
 
   async detect(content: string | HTMLElement, options: DetectorOptions): Promise<DetectionResult> {
     const audio = content instanceof HTMLAudioElement ? content : null;
@@ -133,7 +133,8 @@ export class AudioDetector implements Detector {
           finalScore = localScore * 0.3 + result.score * 0.7;
           source = 'remote';
         } catch (err) {
-          // Remote call failed — log the error and fall back to local score
+          // Remote call failed — return the token so it can be used for other content
+          this.rateLimiter.returnToken();
           console.warn('[RealityCheck] Remote audio classification failed:', err instanceof Error ? err.message : err);
         }
       }

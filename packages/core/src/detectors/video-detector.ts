@@ -210,7 +210,7 @@ function scoreToConfidence(score: number): DetectionResult['confidence'] {
 export class VideoDetector implements Detector {
   readonly contentType = 'video' as const;
   private readonly cache = new DetectionCache<DetectionResult>();
-  private readonly rateLimiter = new RateLimiter(5, 60_000);
+  private readonly rateLimiter = new RateLimiter(30, 60_000);
 
   async detect(content: string | HTMLElement, options: DetectorOptions): Promise<DetectionResult> {
     const video = content instanceof HTMLVideoElement ? content : null;
@@ -272,7 +272,8 @@ export class VideoDetector implements Detector {
             source = 'remote';
           }
         } catch (err) {
-          // Remote call failed — log the error and fall back to local score
+          // Remote call failed — return the token so it can be used for other content
+          this.rateLimiter.returnToken();
           console.warn('[RealityCheck] Remote video classification failed:', err instanceof Error ? err.message : err);
         }
       }
