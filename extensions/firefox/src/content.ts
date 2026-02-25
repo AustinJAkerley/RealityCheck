@@ -102,12 +102,15 @@ async function processImage(img: HTMLImageElement, settings: ExtensionSettings):
   if (isVideoThumbnail(img)) return;
   processing.add(img);
   try {
+    const t0 = performance.now();
     const result = await pipeline.analyzeImage(img, getDetectorOptions(settings));
+    const durationMs = Math.round((performance.now() - t0) * 100) / 100;
     console.info('[RealityCheck] Image detection', {
       stage: decisionStageLabel(result.decisionStage),
       score: result.score,
       source: result.source,
       details: result.details,
+      durationMs,
     });
     // Guard again after await: a concurrent call may have already watermarked this element.
     if (handles.has(img)) return;
@@ -134,12 +137,15 @@ async function processVideo(video: HTMLVideoElement, settings: ExtensionSettings
   if (handles.has(video) || processing.has(video)) return;
   processing.add(video);
   try {
+    const t0 = performance.now();
     const result = await pipeline.analyzeVideo(video, getDetectorOptions(settings));
+    const durationMs = Math.round((performance.now() - t0) * 100) / 100;
     console.info('[RealityCheck] Video detection', {
       stage: decisionStageLabel(result.decisionStage),
       score: result.score,
       source: result.source,
       details: result.details,
+      durationMs,
     });
     // Guard again after await: a concurrent call may have already watermarked this element.
     if (handles.has(video)) return;

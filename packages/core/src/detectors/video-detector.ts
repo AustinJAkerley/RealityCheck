@@ -132,6 +132,9 @@ function seekTo(video: HTMLVideoElement, time: number, timeoutMs = 500): Promise
 const MULTI_FRAME_COUNT = 5;
 /** Downscale size for temporal frame comparison */
 const FRAME_ANALYSIS_SIZE = 64;
+const OBVIOUS_METADATA_AI_THRESHOLD = 0.7;
+const LOCAL_UNCERTAIN_MIN = 0.25;
+const LOCAL_UNCERTAIN_MAX = 0.75;
 
 /**
  * Sample multiple frames from the video and compute temporal consistency.
@@ -243,11 +246,29 @@ export class VideoDetector implements Detector {
 
     // Step 1: URL heuristics
     const localScore = matchesAIVideoUrl(src) ? 0.7 : 0;
+    const isObviousMetadataAI = localScore >= OBVIOUS_METADATA_AI_THRESHOLD;
     let decisionStage: DetectionResult['decisionStage'] = 'initial_heuristics';
 
     let finalScore = localScore;
     let source: DetectionResult['source'] = 'local';
-    let details = `Initial heuristics score: ${localScore.toFixed(2)}`;
+    let details = isObviousMetadataAI
+      ? `Initial heuristics (metadata/URL) flagged obvious AI (${localScore.toFixed(2)})`
+      : `Initial heuristics score: ${localScore.toFixed(2)}`;
+
+    if (isObviousMetadataAI) {
+      finalScore = 0.95;
+      const immediate: DetectionResult = {
+        contentType: 'video',
+        isAIGenerated: true,
+        confidence: scoreToConfidence(finalScore),
+        score: finalScore,
+        source,
+        decisionStage,
+        details,
+      };
+      this.cache.set(cacheKey, immediate);
+      return immediate;
+    }
 
     // Step 2: Multi-frame temporal analysis (same-origin video elements only).
     // This runs before remote classification to enrich the local signal.
@@ -271,8 +292,14 @@ export class VideoDetector implements Detector {
         const temporalBoost = Math.min(0.3, temporalScore);
         const visualBoost = videoVisualScore * 0.35;
         if (options.detectionQuality === 'high' && hasVideoModelScore) {
-          // In high mode, use bundled model output as the primary frame-level decision.
-          finalScore = videoModelScore;
+          // In high mode, use local ML first. Escalate to remote only if uncertain.
+          if (videoModelScore >= LOCAL_UNCERTAIN_MAX) {
+            finalScore = 0.95;
+          } else if (videoModelScore <= LOCAL_UNCERTAIN_MIN) {
+            finalScore = 0.05;
+          } else {
+            finalScore = videoModelScore;
+          }
           decisionStage = 'local_ml';
           details = `Local ML frame verdict: ${videoModelScore >= 0.5 ? 'AI generated' : 'Not AI generated'} (${videoModelScore.toFixed(2)})`;
         } else {
@@ -286,7 +313,10 @@ export class VideoDetector implements Detector {
     }
 
     // Step 3: Remote classification — send best available frame.
-    if (options.remoteEnabled && video) {
+    const shouldEscalateRemote =
+      finalScore > LOCAL_UNCERTAIN_MIN && finalScore < LOCAL_UNCERTAIN_MAX;
+
+    if (options.remoteEnabled && video && shouldEscalateRemote) {
       if (this.rateLimiter.consume()) {
         try {
           // Prefer frames from multi-frame analysis; fall back to a fresh single-frame

@@ -40,6 +40,9 @@ const PREFILTER_SIZE = 64;
  * we prefer to analyse too many images rather than miss real AI photos.
  */
 const PHOTOREALISM_SKIP_THRESHOLD = 0.20;
+const OBVIOUS_METADATA_AI_THRESHOLD = 0.7;
+const LOCAL_UNCERTAIN_MIN = 0.25;
+const LOCAL_UNCERTAIN_MAX = 0.75;
 
 // ── ML model registry ────────────────────────────────────────────────────────
 
@@ -560,15 +563,19 @@ export class ImageDetector implements Detector {
     const nw = img?.naturalWidth ?? 0;
     const nh = img?.naturalHeight ?? 0;
     const localScore = computeLocalImageScore(src, nw, nh);
+    const isObviousMetadataAI = localScore >= OBVIOUS_METADATA_AI_THRESHOLD;
     let decisionStage: DetectionResult['decisionStage'] = 'initial_heuristics';
+    let details = isObviousMetadataAI
+      ? `Initial heuristics (metadata) flagged obvious AI (${localScore.toFixed(2)})`
+      : `Initial heuristics score: ${localScore.toFixed(2)}`;
 
     // ── Step 2b: Visual AI scoring (medium / high tiers) ─────────────────────
     // Uses per-pixel statistics from the pre-filter canvas sample to detect
     // diffusion-model characteristics (uniform saturation, balanced channels,
     // well-exposed luminance). Improves detection of AI images that don't
     // match known CDN patterns or dimension heuristics.
-    let combinedLocalScore = localScore;
-    if (pixelData && quality !== 'low') {
+    let combinedLocalScore = isObviousMetadataAI ? 0.95 : localScore;
+    if (!isObviousMetadataAI && pixelData && quality !== 'low') {
       const visualScore = computeVisualAIScore(pixelData, PREFILTER_SIZE, PREFILTER_SIZE);
       // Give visual pixel analysis equal standing with URL/dimension heuristics.
       // Take the higher of the URL/dimension score or the visual score (after discount).
@@ -580,9 +587,18 @@ export class ImageDetector implements Detector {
       if (quality === 'high') {
         const mlScore = await runMlModelScore(pixelData, PREFILTER_SIZE, PREFILTER_SIZE);
         if (mlScore !== null) {
-          // In high mode, the bundled local model is the primary decision path.
-          combinedLocalScore = mlScore;
+          // In high mode, use local ML first. Escalate to remote only if uncertain.
+          if (mlScore >= LOCAL_UNCERTAIN_MAX) {
+            combinedLocalScore = 0.95;
+          } else if (mlScore <= LOCAL_UNCERTAIN_MIN) {
+            combinedLocalScore = 0.05;
+          } else {
+            combinedLocalScore = mlScore;
+          }
           decisionStage = 'local_ml';
+          details = `Local ML verdict: ${
+            combinedLocalScore >= 0.5 ? 'AI generated' : 'Not AI generated'
+          } (${combinedLocalScore.toFixed(2)})`;
         }
       }
     }
@@ -635,22 +651,24 @@ export class ImageDetector implements Detector {
     }
 
     // Blend EXIF signal into combined local score (EXIF is a 15% weight)
-    if (exifScore > 0) {
-      combinedLocalScore = Math.min(1, combinedLocalScore * 0.85 + exifScore * 0.15);
+    if (!isObviousMetadataAI) {
+      if (exifScore > 0) {
+        combinedLocalScore = Math.min(1, combinedLocalScore * 0.85 + exifScore * 0.15);
+      }
+      // Apply C2PA adjustment (negative = more authentic → reduce score)
+      combinedLocalScore = Math.max(0, combinedLocalScore + c2paAdjustment);
     }
-    // Apply C2PA adjustment (negative = more authentic → reduce score)
-    combinedLocalScore = Math.max(0, combinedLocalScore + c2paAdjustment);
 
     let finalScore = combinedLocalScore;
     let source: DetectionResult['source'] = 'local';
-    let details =
-      decisionStage === 'local_ml'
-        ? `Local ML verdict: ${combinedLocalScore >= 0.5 ? 'AI generated' : 'Not AI generated'} (${combinedLocalScore.toFixed(2)})`
-        : `Initial heuristics score: ${combinedLocalScore.toFixed(2)}`;
+    const shouldEscalateRemote =
+      !isObviousMetadataAI &&
+      combinedLocalScore > LOCAL_UNCERTAIN_MIN &&
+      combinedLocalScore < LOCAL_UNCERTAIN_MAX;
 
     // ── Step 3: Remote classification ─────────────────────────────────────────
     // Always send to remote when enabled and the image passed the pre-filter.
-    if (options.remoteEnabled && img) {
+    if (options.remoteEnabled && img && shouldEscalateRemote) {
       if (this.rateLimiter.consume()) {
         try {
           const dataUrl = downscaleImage(img);

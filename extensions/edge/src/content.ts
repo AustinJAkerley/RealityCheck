@@ -136,12 +136,15 @@ async function processImage(img: HTMLImageElement, settings: ExtensionSettings):
   processing.add(img);
   try {
     const opts = getDetectorOptions(settings);
+    const t0 = performance.now();
     const result = await pipeline.analyzeImage(img, opts);
+    const durationMs = Math.round((performance.now() - t0) * 100) / 100;
     console.info('[RealityCheck] Image detection', {
       stage: decisionStageLabel(result.decisionStage),
       score: result.score,
       source: result.source,
       details: result.details,
+      durationMs,
     });
 
     // Guard again after await: a concurrent call may have already watermarked this element.
@@ -170,12 +173,15 @@ async function processVideo(video: HTMLVideoElement, settings: ExtensionSettings
   processing.add(video);
   try {
     const opts = getDetectorOptions(settings);
+    const t0 = performance.now();
     const result = await pipeline.analyzeVideo(video, opts);
+    const durationMs = Math.round((performance.now() - t0) * 100) / 100;
     console.info('[RealityCheck] Video detection', {
       stage: decisionStageLabel(result.decisionStage),
       score: result.score,
       source: result.source,
       details: result.details,
+      durationMs,
     });
 
     // Guard again after await: a concurrent call may have already watermarked this element.

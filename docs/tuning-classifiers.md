@@ -183,6 +183,12 @@ For shell-based local model checks (throw images at the bundled model and print 
 
 - `docs/local-model-shell-testing.md`
 
+Current cascade behavior for media:
+
+1. obvious metadata/URL heuristic matches can immediately label AI,
+2. otherwise local ML is used first in `high` mode,
+3. remote ML is only used when local score is still uncertain and remote is enabled.
+
 To swap to a newer bundled model runtime later, keep using the same adapter and pass a new API implementation:
 
 ```ts

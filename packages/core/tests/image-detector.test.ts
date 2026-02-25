@@ -456,4 +456,81 @@ describe('ML model registry', () => {
       createSpy.mockRestore();
     }
   });
+
+  test('obvious metadata AI verdict bypasses local ML and remote escalation', async () => {
+    const runMock = jest.fn().mockResolvedValue(0.05);
+    registerMlModel({ run: runMock });
+    const fetchMock = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('no remote'));
+
+    const detector = new ImageDetector();
+    const img = document.createElement('img');
+    Object.defineProperty(img, 'complete', { configurable: true, value: true });
+    Object.defineProperty(img, 'naturalWidth', { configurable: true, value: 1024 });
+    Object.defineProperty(img, 'naturalHeight', { configurable: true, value: 1024 });
+    Object.defineProperty(img, 'src', { configurable: true, value: 'https://midjourney.com/obvious.png' });
+
+    try {
+      const result = await detector.detect(img, {
+        remoteEnabled: true,
+        detectionQuality: 'high',
+      });
+      expect(result.isAIGenerated).toBe(true);
+      expect(result.decisionStage).toBe('initial_heuristics');
+      expect(runMock).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  test('uncertain local ML score escalates to remote ML when enabled', async () => {
+    registerMlModel({
+      async run() {
+        return 0.5;
+      },
+    });
+    const detector = new ImageDetector();
+    const img = document.createElement('img');
+    Object.defineProperty(img, 'complete', { configurable: true, value: true });
+    Object.defineProperty(img, 'naturalWidth', { configurable: true, value: 1024 });
+    Object.defineProperty(img, 'naturalHeight', { configurable: true, value: 1024 });
+    Object.defineProperty(img, 'src', { configurable: true, value: 'data:image/png;base64,AAAA' });
+
+    const pixels = noisyPixels(SIZE);
+    const originalCreateElement = document.createElement.bind(document);
+    const createSpy = jest.spyOn(document, 'createElement');
+    createSpy.mockImplementation(((tagName: string) => {
+      if (tagName !== 'canvas') return originalCreateElement(tagName);
+      return {
+        width: 0,
+        height: 0,
+        getContext: () => ({
+          drawImage: () => undefined,
+          getImageData: () => ({ data: pixels }),
+        }),
+        toDataURL: () => 'data:image/jpeg;base64,mock',
+      } as unknown as HTMLCanvasElement;
+    }) as typeof document.createElement);
+
+    const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ score: 0.9, label: 'ai' }),
+      status: 200,
+      statusText: 'OK',
+    } as Response);
+
+    try {
+      const result = await detector.detect(img, {
+        remoteEnabled: true,
+        detectionQuality: 'high',
+      });
+      expect(result.source).toBe('remote');
+      expect(result.decisionStage).toBe('remote_ml');
+      expect(result.details).toContain('Remote ML score');
+      expect(result.isAIGenerated).toBe(true);
+    } finally {
+      createSpy.mockRestore();
+      fetchMock.mockRestore();
+    }
+  });
 });
