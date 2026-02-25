@@ -135,7 +135,16 @@ async function processImage(img: HTMLImageElement, settings: ExtensionSettings):
         )
       );
     } else if (settings.devMode) {
-      handles.set(img, applyNotAIWatermark(img, settings.watermark));
+      handles.set(
+        img,
+        applyNotAIWatermark(
+          img,
+          settings.watermark,
+          decisionStageLabel(result.decisionStage),
+          result.details,
+          detectionId
+        )
+      );
     }
   } finally {
     processing.delete(img);
@@ -175,7 +184,16 @@ async function processVideo(video: HTMLVideoElement, settings: ExtensionSettings
         )
       );
     } else if (settings.devMode) {
-      handles.set(video, applyNotAIWatermark(video, settings.watermark));
+      handles.set(
+        video,
+        applyNotAIWatermark(
+          video,
+          settings.watermark,
+          decisionStageLabel(result.decisionStage),
+          result.details,
+          detectionId
+        )
+      );
     }
     removeThumbnailWatermarks(video);
   } finally {

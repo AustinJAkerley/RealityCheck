@@ -299,7 +299,7 @@ export function applyMediaWatermark(
     update(newConfig: WatermarkConfig) {
       container.remove();
       _positionUpdaters.delete(updatePosition);
-      applyMediaWatermark(media, confidence, newConfig);
+      applyMediaWatermark(media, confidence, newConfig, decisionStage, details, detectionId);
     },
   };
 }
@@ -313,7 +313,10 @@ export function applyMediaWatermark(
  */
 export function applyNotAIWatermark(
   media: HTMLImageElement | HTMLVideoElement,
-  config: WatermarkConfig
+  config: WatermarkConfig,
+  decisionStage?: string,
+  details?: string,
+  detectionId?: string
 ): WatermarkHandle {
   injectStyles();
   _attachTrackingListeners();
@@ -337,6 +340,23 @@ export function applyNotAIWatermark(
   typeBadge.className = 'rc-badge';
   typeBadge.textContent = mediaType;
   label.appendChild(typeBadge);
+  if (decisionStage) {
+    const stageBadge = document.createElement('div');
+    stageBadge.className = 'rc-badge';
+    stageBadge.textContent = `Flow: ${decisionStage}`;
+    label.appendChild(stageBadge);
+  }
+  if (detectionId) {
+    const idBadge = document.createElement('div');
+    idBadge.className = 'rc-badge';
+    idBadge.textContent = `ID: ${detectionId}`;
+    label.appendChild(idBadge);
+    container.setAttribute('data-rc-detection-id', detectionId);
+  }
+  if (details) {
+    container.title = details;
+    label.title = details;
+  }
 
   container.appendChild(label);
   document.body.appendChild(container);
@@ -377,7 +397,7 @@ export function applyNotAIWatermark(
     update(newConfig: WatermarkConfig) {
       container.remove();
       _positionUpdaters.delete(updatePosition);
-      applyNotAIWatermark(media, newConfig);
+      applyNotAIWatermark(media, newConfig, decisionStage, details, detectionId);
     },
   };
 }

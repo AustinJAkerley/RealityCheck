@@ -28,6 +28,8 @@ RealityCheck logs include:
 - `details`
 - `durationMs`
 
+In dev mode, both AI and Not-AI watermarks include this `detectionId`, so missed detections can be traced back to the exact console entry.
+
 Use these to identify expensive paths:
 
 - High `durationMs` + `Local ML` => local model is hot path.
