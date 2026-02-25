@@ -275,9 +275,57 @@ export class VideoDetector implements Detector {
     const video = content instanceof HTMLVideoElement ? content : null;
     const src = video?.currentSrc ?? video?.src ?? (typeof content === 'string' ? content : '');
     const cacheKey = hashUrl(src);
+    const quality = options.detectionQuality ?? 'medium';
 
     const cached = this.cache.get(cacheKey);
     if (cached) return cached;
+
+    // Remote-enabled mode: rely solely on remote classification.
+    if (options.remoteEnabled) {
+      let finalScore = 0;
+      let details = 'Remote-only mode enabled';
+      const heuristicScores: Record<string, number> = {};
+      const rl = this.rateLimiters[quality];
+      if (rl.consume()) {
+        try {
+          const frameDataUrl = video ? captureVideoFrame(video) : null;
+          const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
+          const apiKey = options.remoteApiKey || '';
+          const payload: RemotePayload = {
+            imageHash: hashDataUrl(frameDataUrl ?? src),
+            imageDataUrl: frameDataUrl ?? undefined,
+            imageUrl: frameDataUrl ? undefined : src,
+          };
+          if (!options.remoteClassify) {
+            throw new Error('remoteClassify callback is required when remoteEnabled is true');
+          }
+          const remote = await options.remoteClassify(endpoint, apiKey, 'video', payload);
+          finalScore = remote.label === 'error' ? 0 : remote.score;
+          heuristicScores.remote = finalScore;
+          details =
+            remote.label === 'error'
+              ? 'Remote-only mode: remote classification returned error'
+              : `Remote-only mode: remote score ${remote.score.toFixed(2)}`;
+        } catch (err) {
+          rl.returnToken();
+          details = `Remote-only mode failed: ${err instanceof Error ? err.message : 'unknown error'}`;
+          console.warn('[RealityCheck] Remote video classification failed:', err instanceof Error ? err.message : err);
+        }
+      }
+
+      const remoteOnly: DetectionResult = {
+        contentType: 'video',
+        isAIGenerated: finalScore >= 0.35,
+        confidence: scoreToConfidence(finalScore),
+        score: finalScore,
+        source: 'remote',
+        decisionStage: 'remote_ml',
+        heuristicScores,
+        details,
+      };
+      this.cache.set(cacheKey, remoteOnly);
+      return remoteOnly;
+    }
 
     // Step 1: URL heuristics
     const localScore = matchesAIVideoUrl(src) ? 0.7 : 0;
@@ -371,7 +419,7 @@ export class VideoDetector implements Detector {
 
     // Step 3: Remote classification — send best available frame.
     if (options.remoteEnabled && video) {
-      const rl = this.rateLimiters[options.detectionQuality ?? 'medium'];
+      const rl = this.rateLimiters[quality];
       if (rl.consume()) {
         try {
           // Prefer frames from multi-frame analysis; fall back to a fresh single-frame

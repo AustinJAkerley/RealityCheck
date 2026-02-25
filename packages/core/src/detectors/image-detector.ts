@@ -613,14 +613,62 @@ export class ImageDetector implements Detector {
     const img = content instanceof HTMLImageElement ? content : null;
     const src = img?.src ?? (typeof content === 'string' ? content : '');
     const cacheKey = hashUrl(src);
+    const quality = options.detectionQuality ?? 'medium';
 
     const cached = this.cache.get(cacheKey);
     if (cached) return cached;
 
+    // Remote-enabled mode: rely solely on remote classification.
+    if (options.remoteEnabled) {
+      let finalScore = 0;
+      let details = 'Remote-only mode enabled';
+      const heuristicScores: Record<string, number> = {};
+      const rl = this.rateLimiters[quality];
+      if (rl.consume()) {
+        try {
+          const dataUrl = img ? downscaleImage(img) : undefined;
+          const imageHash = hashDataUrl(dataUrl ?? src);
+          const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
+          const apiKey = options.remoteApiKey || '';
+          const payload: RemotePayload = {
+            imageHash,
+            imageDataUrl: dataUrl ?? undefined,
+            imageUrl: dataUrl ? undefined : src,
+          };
+          if (!options.remoteClassify) {
+            throw new Error('remoteClassify callback is required when remoteEnabled is true');
+          }
+          const remote = await options.remoteClassify(endpoint, apiKey, 'image', payload);
+          finalScore = remote.label === 'error' ? 0 : remote.score;
+          heuristicScores.remote = finalScore;
+          details =
+            remote.label === 'error'
+              ? 'Remote-only mode: remote classification returned error'
+              : `Remote-only mode: remote score ${remote.score.toFixed(2)}`;
+        } catch (err) {
+          rl.returnToken();
+          details = `Remote-only mode failed: ${err instanceof Error ? err.message : 'unknown error'}`;
+          console.warn('[RealityCheck] Remote image classification failed:', err instanceof Error ? err.message : err);
+        }
+      }
+
+      const result: DetectionResult = {
+        contentType: 'image',
+        isAIGenerated: finalScore >= 0.35,
+        confidence: scoreToConfidence(finalScore),
+        score: finalScore,
+        source: 'remote',
+        decisionStage: 'remote_ml',
+        heuristicScores,
+        details,
+      };
+      this.cache.set(cacheKey, result);
+      return result;
+    }
+
     // ── Step 1: Photorealism pre-filter ───────────────────────────────────────
     // Only runs on actual HTMLImageElement instances; string URLs skip the canvas step.
     const pixelData = img ? extractPixelData(img) : null;
-    const quality = options.detectionQuality ?? 'medium';
     const preFilter = await runPhotorealismPreFilter(pixelData, quality);
 
     if (!preFilter.isPhotorealistic) {

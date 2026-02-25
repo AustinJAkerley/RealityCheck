@@ -5,26 +5,26 @@ import { registerMlModel } from '../src/detectors/image-detector';
 import { VideoDetector } from '../src/detectors/video-detector';
 
 describe('VideoDetector', () => {
-  test('obvious metadata URL verdict bypasses local ML and remote', async () => {
+  test('remote-enabled mode bypasses local URL and local ML', async () => {
     const runMock = jest.fn().mockResolvedValue(0.05);
     registerMlModel({ run: runMock });
-    const originalFetch = (globalThis as { fetch?: unknown }).fetch;
-    const fetchMock = jest.fn().mockRejectedValue(new Error('no remote'));
-    (globalThis as { fetch?: unknown }).fetch = fetchMock;
 
     try {
       const detector = new VideoDetector();
       const result = await detector.detect('https://sora.openai/videos/foo.mp4', {
         remoteEnabled: true,
         detectionQuality: 'high',
+        remoteClassify: async () => ({ score: 0.9, label: 'ai' }),
       });
 
       expect(result.isAIGenerated).toBe(true);
-      expect(result.decisionStage).toBe('initial_heuristics');
+      expect(result.source).toBe('remote');
+      expect(result.decisionStage).toBe('remote_ml');
       expect(runMock).not.toHaveBeenCalled();
-      expect(fetchMock).not.toHaveBeenCalled();
+      expect(result.heuristicScores?.metadataUrl).toBeUndefined();
+      expect(result.heuristicScores?.remote).toBeCloseTo(0.9, 5);
     } finally {
-      (globalThis as { fetch?: unknown }).fetch = originalFetch;
+      // no-op
     }
   });
 
@@ -219,17 +219,9 @@ describe('VideoDetector', () => {
     }
   });
 
-  test('uncertain local ML frame score escalates to remote ML', async () => {
+  test('remote-enabled mode relies solely on remote result for videos', async () => {
     const runMock = jest.fn().mockResolvedValue(0.5);
     registerMlModel({ run: runMock });
-    const originalFetch = (globalThis as { fetch?: unknown }).fetch;
-    const fetchMock = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ score: 0.9, label: 'ai' }),
-      status: 200,
-      statusText: 'OK',
-    } as Response);
-    (globalThis as { fetch?: unknown }).fetch = fetchMock;
 
     const detector = new VideoDetector();
     const video = document.createElement('video');
@@ -277,15 +269,16 @@ describe('VideoDetector', () => {
       const result = await detector.detect(video, {
         remoteEnabled: true,
         detectionQuality: 'high',
+        remoteClassify: async () => ({ score: 0.1, label: 'human' }),
       });
       expect(result.source).toBe('remote');
       expect(result.decisionStage).toBe('remote_ml');
-      expect(result.heuristicScores?.remote).toBeCloseTo(0.9, 5);
-      expect(result.details).toContain('Remote ML score');
-      expect(result.isAIGenerated).toBe(true);
+      expect(result.heuristicScores?.remote).toBeCloseTo(0.1, 5);
+      expect(result.details).toContain('Remote-only mode');
+      expect(result.isAIGenerated).toBe(false);
+      expect(result.localModelScore).toBeUndefined();
     } finally {
       createSpy.mockRestore();
-      (globalThis as { fetch?: unknown }).fetch = originalFetch;
     }
   });
 

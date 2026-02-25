@@ -189,6 +189,11 @@ Current cascade behavior for media:
 2. otherwise local ML is used first in `high` mode,
 3. remote ML is only used when local score is still uncertain and remote is enabled.
 
+When `remoteEnabled=true`, detectors now run in **remote-only mode**:
+
+- local heuristics and local ML are skipped for final classification,
+- the final label comes solely from remote ML (`decisionStage: remote_ml`).
+
 Important: local steps are cascading and independent for AI labels. If a step independently exceeds the AI threshold (e.g. metadata/CDN hit or local ML), later local checks do not force it back to Not-AI.
 
 ## Local model quality notes (production)
