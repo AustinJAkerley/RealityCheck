@@ -370,10 +370,37 @@ async function scoreHighTier(data: Uint8ClampedArray): Promise<number> {
 // ── Public pre-filter API ────────────────────────────────────────────────────
 
 /**
+ * Determine whether drawing `img` to a canvas would taint it (making
+ * `toDataURL` / `getImageData` throw a SecurityError).
+ *
+ * An image is safe to read from canvas when:
+ *  - its src is a data: or blob: URI (never cross-origin), or
+ *  - its src shares the current document's origin, or
+ *  - it carries a crossOrigin attribute (indicates it was loaded with CORS).
+ *
+ * When in doubt we return `true` (assume tainted) to avoid triggering the
+ * browser's console SecurityError, which appears even for caught exceptions.
+ */
+function wouldTaintCanvas(img: HTMLImageElement): boolean {
+  const src = img.src;
+  if (!src || src.startsWith('data:') || src.startsWith('blob:')) return false;
+  try {
+    const imgOrigin = new URL(src).origin;
+    if (imgOrigin === self.location.origin) return false;
+  } catch {
+    return false; // relative URL — same origin
+  }
+  // Cross-origin: only safe if the element carries a crossOrigin attribute
+  // (meaning it was loaded with CORS and the server returned Allow-Origin headers).
+  return img.crossOrigin !== 'anonymous' && img.crossOrigin !== 'use-credentials';
+}
+
+/**
  * Draw an HTMLImageElement into a small canvas and return the pixel data.
  * Returns null if the image is cross-origin or the canvas context is unavailable.
  */
 function extractPixelData(img: HTMLImageElement): Uint8ClampedArray | null {
+  if (wouldTaintCanvas(img)) return null;
   try {
     const canvas = document.createElement('canvas');
     canvas.width = PREFILTER_SIZE;
@@ -490,8 +517,10 @@ function scoreToConfidence(score: number): DetectionResult['confidence'] {
 
 /**
  * Downscale an HTMLImageElement for remote transmission.
+ * Returns null for cross-origin images (would taint the canvas).
  */
 function downscaleImage(img: HTMLImageElement, maxDim = 128): string | null {
+  if (wouldTaintCanvas(img)) return null;
   try {
     const canvas = document.createElement('canvas');
     const scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
@@ -633,6 +662,9 @@ export class ImageDetector implements Detector {
           const result = await adapter.classify('image', {
             imageHash,
             imageDataUrl: dataUrl ?? undefined,
+            // Fall back to the source URL for vision-capable adapters when
+            // canvas is unavailable (e.g. cross-origin image, no CORS headers).
+            imageUrl: dataUrl ? undefined : src,
           });
           finalScore = combinedLocalScore * 0.3 + result.score * 0.7;
           source = 'remote';

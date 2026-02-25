@@ -163,6 +163,8 @@ export interface RemotePayload {
   text?: string;
   imageDataUrl?: string;
   imageHash?: string;
+  /** Original image URL — used as a fallback by vision-capable adapters when imageDataUrl is unavailable (e.g. cross-origin canvas taint). */
+  imageUrl?: string;
 }
 
 export interface RemoteClassificationResult {

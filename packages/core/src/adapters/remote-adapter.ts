@@ -149,6 +149,10 @@ export class AzureOpenAIAdapter implements RemoteAdapter {
       const userContent: unknown[] = [];
       if (payload.imageDataUrl) {
         userContent.push({ type: 'image_url', image_url: { url: payload.imageDataUrl } });
+      } else if (payload.imageUrl) {
+        // Cross-origin images can't be canvas-encoded; pass the URL directly so the
+        // vision model can fetch it (OpenAI vision supports URL inputs natively).
+        userContent.push({ type: 'image_url', image_url: { url: payload.imageUrl } });
       }
       userContent.push({
         type: 'text',
