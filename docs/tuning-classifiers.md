@@ -167,6 +167,28 @@ registerMlModel({
 });
 ```
 
+### Built-in local adapter for Nonescape mini
+
+`@reality-check/core` now includes a helper adapter that posts `64×64` frame/image pixel buffers to a local model service:
+
+```ts
+import { registerNonescapeMiniModel } from '@reality-check/core';
+
+registerNonescapeMiniModel({
+  endpoint: 'http://127.0.0.1:8765', // default
+  model: 'nonescape-mini',           // default
+  path: '/v1/classify/image',        // default
+});
+```
+
+Expected local endpoint contract:
+
+- `POST /v1/classify/image`
+- JSON body: `{ model, width, height, pixelsBase64 }`
+- JSON response: `{ score: number }` (or `{ aiScore: number }`)
+
+When quality is set to `high`, image detection and sampled video frames both invoke this registered local model.
+
 Recommended open models trained on real-vs-AI datasets:
 
 | Model | Size | Dataset | Notes |

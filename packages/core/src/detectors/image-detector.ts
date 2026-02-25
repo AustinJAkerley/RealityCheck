@@ -92,6 +92,24 @@ export function isMlModelAvailable(): boolean {
   return _mlModelRunner !== null;
 }
 
+/**
+ * Run the registered ML model on arbitrary pixel data.
+ * Returns null when no model is registered or inference fails.
+ */
+export async function runMlModelScore(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number
+): Promise<number | null> {
+  if (_mlModelRunner === null) return null;
+  try {
+    const score = await _mlModelRunner.run(data, width, height);
+    return Math.max(0, Math.min(1, score));
+  } catch {
+    return null;
+  }
+}
+
 // ── Pre-filter helper functions ──────────────────────────────────────────────
 
 /**
@@ -354,14 +372,10 @@ export function scoreMediumTier(data: Uint8ClampedArray): number {
  * Falls back to Medium-tier canvas analysis when no model is registered.
  */
 async function scoreHighTier(data: Uint8ClampedArray): Promise<number> {
-  if (_mlModelRunner !== null) {
-    try {
-      const mlScore = await _mlModelRunner.run(data, PREFILTER_SIZE, PREFILTER_SIZE);
-      // Blend: ML model result weighted 70%, canvas analysis 30%
-      return scoreMediumTier(data) * 0.3 + mlScore * 0.7;
-    } catch {
-      // ML inference failed — fall back to medium tier
-    }
+  const mlScore = await runMlModelScore(data, PREFILTER_SIZE, PREFILTER_SIZE);
+  if (mlScore !== null) {
+    // Blend: ML model result weighted 70%, canvas analysis 30%
+    return scoreMediumTier(data) * 0.3 + mlScore * 0.7;
   }
   // Fall back to Medium tier when no model is registered
   return scoreMediumTier(data);
@@ -562,6 +576,12 @@ export class ImageDetector implements Detector {
       // dimension match but no CDN URL match). Removed that double-discount.
       const visualWeight = quality === 'high' ? 0.85 : 0.75;
       combinedLocalScore = Math.max(localScore, visualScore * visualWeight);
+      if (quality === 'high') {
+        const mlScore = await runMlModelScore(pixelData, PREFILTER_SIZE, PREFILTER_SIZE);
+        if (mlScore !== null) {
+          combinedLocalScore = Math.max(combinedLocalScore, mlScore * 0.9);
+        }
+      }
     }
 
     // ── Step 2c: EXIF metadata analysis ──────────────────────────────────────

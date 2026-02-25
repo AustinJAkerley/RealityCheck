@@ -322,7 +322,7 @@ describe('computeVisualAIScore', () => {
 
 // ── ML model registry ─────────────────────────────────────────────────────────
 
-import { registerMlModel, isMlModelAvailable } from '../src/detectors/image-detector';
+import { registerMlModel, isMlModelAvailable, runMlModelScore } from '../src/detectors/image-detector';
 
 describe('ML model registry', () => {
   test('isMlModelAvailable returns a boolean', () => {
@@ -351,6 +351,15 @@ describe('ML model registry', () => {
     expect(result.score).toBeGreaterThan(0.5);
     expect(result.isPhotorealistic).toBe(true);
   });
-});
 
+  test('runMlModelScore returns clamped model output', async () => {
+    registerMlModel({
+      async run() {
+        return 1.4;
+      },
+    });
+    const score = await runMlModelScore(noisyPixels(SIZE), SIZE, SIZE);
+    expect(score).toBe(1);
+  });
+});
 

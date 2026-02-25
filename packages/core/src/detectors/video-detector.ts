@@ -25,7 +25,7 @@ import { DetectionCache } from '../utils/cache.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
 import { hashUrl, hashDataUrl } from '../utils/hash.js';
 import { createRemoteAdapter } from '../adapters/remote-adapter.js';
-import { computeVisualAIScore } from './image-detector.js';
+import { computeVisualAIScore, runMlModelScore } from './image-detector.js';
 
 const AI_VIDEO_PATTERNS: RegExp[] = [
   /sora\.openai/i,
@@ -143,11 +143,12 @@ const FRAME_ANALYSIS_SIZE = 64;
  * - `visualScore`: average visual AI score across frames
  */
 async function analyzeVideoFrames(
-  video: HTMLVideoElement
-): Promise<{ frames: string[]; temporalScore: number; visualScore: number }> {
+  video: HTMLVideoElement,
+  quality: DetectorOptions['detectionQuality']
+): Promise<{ frames: string[]; temporalScore: number; visualScore: number; modelScore: number }> {
   const duration = video.duration;
   if (!isFinite(duration) || duration <= 0 || video.videoWidth === 0) {
-    return { frames: [], temporalScore: 0, visualScore: 0 };
+    return { frames: [], temporalScore: 0, visualScore: 0, modelScore: 0 };
   }
 
   const frameDataUrls: string[] = [];
@@ -169,7 +170,7 @@ async function analyzeVideoFrames(
   await seekTo(video, savedTime);
 
   if (framePixels.length < 2) {
-    return { frames: frameDataUrls, temporalScore: 0, visualScore: 0 };
+    return { frames: frameDataUrls, temporalScore: 0, visualScore: 0, modelScore: 0 };
   }
 
   // Compute frame-to-frame differences
@@ -199,7 +200,18 @@ async function analyzeVideoFrames(
   const visualScore =
     visualScores.reduce((a, b) => a + b, 0) / visualScores.length;
 
-  return { frames: frameDataUrls, temporalScore, visualScore };
+  let modelScore = 0;
+  if (quality === 'high') {
+    const modelScores = await Promise.all(
+      framePixels.map((px) => runMlModelScore(px, FRAME_ANALYSIS_SIZE, FRAME_ANALYSIS_SIZE))
+    );
+    const usableScores = modelScores.filter((s): s is number => typeof s === 'number');
+    if (usableScores.length > 0) {
+      modelScore = usableScores.reduce((a, b) => a + b, 0) / usableScores.length;
+    }
+  }
+
+  return { frames: frameDataUrls, temporalScore, visualScore, modelScore };
 }
 
 function scoreToConfidence(score: number): DetectionResult['confidence'] {
@@ -231,12 +243,14 @@ export class VideoDetector implements Detector {
     // This runs before remote classification to enrich the local signal.
     let temporalScore = 0;
     let videoVisualScore = 0;
+    let videoModelScore = 0;
     let capturedFrames: string[] = [];
     if (video) {
       try {
-        const analysis = await analyzeVideoFrames(video);
+        const analysis = await analyzeVideoFrames(video, options.detectionQuality);
         temporalScore = analysis.temporalScore;
         videoVisualScore = analysis.visualScore;
+        videoModelScore = analysis.modelScore;
         capturedFrames = analysis.frames;
 
         // Blend temporal and visual signals into local score.
@@ -244,7 +258,8 @@ export class VideoDetector implements Detector {
         // meaningful weight when there is no URL match.
         const temporalBoost = Math.min(0.3, temporalScore);
         const visualBoost = videoVisualScore * 0.35;
-        finalScore = Math.min(1, localScore + temporalBoost + visualBoost);
+        const modelBoost = videoModelScore * 0.45;
+        finalScore = Math.min(1, localScore + temporalBoost + visualBoost + modelBoost);
       } catch {
         // Frame analysis failed — continue with URL score only
       }
