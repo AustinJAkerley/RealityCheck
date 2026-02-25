@@ -101,21 +101,31 @@ function removeThumbnailWatermarks(video: HTMLVideoElement): void {
 }
 
 async function processImage(img: HTMLImageElement, settings: ExtensionSettings): Promise<void> {
-  if (handles.has(img) || processing.has(img)) return;
-  if (!img.complete || img.naturalWidth < 100 || img.naturalHeight < 100) return;
-  if (isVideoThumbnail(img)) return;
+  const detectionId = createDetectionId('img');
+  if (handles.has(img) || processing.has(img)) {
+    console.info('[RealityCheck] Image detection skipped', { detectionId, reason: 'already-processing-or-watermarked' });
+    return;
+  }
+  if (!img.complete || img.naturalWidth < 100 || img.naturalHeight < 100) {
+    console.info('[RealityCheck] Image detection skipped', { detectionId, reason: 'image-too-small-or-not-loaded' });
+    return;
+  }
+  if (isVideoThumbnail(img)) {
+    console.info('[RealityCheck] Image detection skipped', { detectionId, reason: 'video-thumbnail' });
+    return;
+  }
   processing.add(img);
   try {
     const t0 = performance.now();
     const result = await pipeline.analyzeImage(img, getDetectorOptions(settings));
     const durationMs = Math.round((performance.now() - t0) * 100) / 100;
-    const detectionId = createDetectionId('img');
     console.info('[RealityCheck] Image detection', {
       detectionId,
       stage: decisionStageLabel(result.decisionStage),
       score: result.score,
       source: result.source,
       localModelScore: result.localModelScore,
+      heuristicScores: result.heuristicScores,
       markedAsAI: result.isAIGenerated,
       details: result.details,
       durationMs,
@@ -152,19 +162,23 @@ async function processImage(img: HTMLImageElement, settings: ExtensionSettings):
 }
 
 async function processVideo(video: HTMLVideoElement, settings: ExtensionSettings): Promise<void> {
-  if (handles.has(video) || processing.has(video)) return;
+  const detectionId = createDetectionId('vid');
+  if (handles.has(video) || processing.has(video)) {
+    console.info('[RealityCheck] Video detection skipped', { detectionId, reason: 'already-processing-or-watermarked' });
+    return;
+  }
   processing.add(video);
   try {
     const t0 = performance.now();
     const result = await pipeline.analyzeVideo(video, getDetectorOptions(settings));
     const durationMs = Math.round((performance.now() - t0) * 100) / 100;
-    const detectionId = createDetectionId('vid');
     console.info('[RealityCheck] Video detection', {
       detectionId,
       stage: decisionStageLabel(result.decisionStage),
       score: result.score,
       source: result.source,
       localModelScore: result.localModelScore,
+      heuristicScores: result.heuristicScores,
       markedAsAI: result.isAIGenerated,
       details: result.details,
       durationMs,

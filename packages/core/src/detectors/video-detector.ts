@@ -267,6 +267,9 @@ export class VideoDetector implements Detector {
 
     // Step 1: URL heuristics
     const localScore = matchesAIVideoUrl(src) ? 0.7 : 0;
+    const heuristicScores: Record<string, number> = {
+      metadataUrl: localScore,
+    };
     const isObviousMetadataAI = localScore >= OBVIOUS_METADATA_AI_THRESHOLD;
     let decisionStage: DetectionResult['decisionStage'] = 'initial_heuristics';
 
@@ -275,6 +278,7 @@ export class VideoDetector implements Detector {
     let details = isObviousMetadataAI
       ? `Initial heuristics (metadata/URL) flagged obvious AI (${localScore.toFixed(2)})`
       : `Initial heuristics score: ${localScore.toFixed(2)}`;
+    let localAiLocked = isObviousMetadataAI;
 
     if (isObviousMetadataAI) {
       finalScore = 0.95;
@@ -285,6 +289,7 @@ export class VideoDetector implements Detector {
         score: finalScore,
         source,
         decisionStage,
+        heuristicScores,
         details,
       };
       this.cache.set(cacheKey, immediate);
@@ -306,6 +311,9 @@ export class VideoDetector implements Detector {
         videoVisualScore = analysis.visualScore;
         videoModelScore = analysis.modelScore;
         hasVideoModelScore = analysis.hasModelScore;
+        heuristicScores.temporal = temporalScore;
+        heuristicScores.visual = videoVisualScore;
+        heuristicScores.localMl = videoModelScore;
         if (hasVideoModelScore) localModelScore = videoModelScore;
         capturedFrames = analysis.frames;
 
@@ -315,15 +323,25 @@ export class VideoDetector implements Detector {
         const temporalBoost = Math.min(0.3, temporalScore);
         const visualBoost = videoVisualScore * 0.35;
         const heuristicComposite = Math.min(1, localScore + temporalBoost + visualBoost);
+        if (heuristicComposite >= LOCAL_UNCERTAIN_MAX) {
+          finalScore = 0.95;
+          localAiLocked = true;
+          details = `Initial heuristics independently flagged AI (${heuristicComposite.toFixed(2)})`;
+        }
         if (hasVideoModelScore) {
-          // Use local ML first. Escalate to remote only if uncertain.
+          // Use local ML as an independent AI trigger.
           if (videoModelScore >= LOCAL_UNCERTAIN_MAX) {
-            const corroboratedByHeuristics = localScore >= 0.7 || temporalScore >= 0.2;
-            finalScore = corroboratedByHeuristics ? 0.95 : 0.35;
+            finalScore = 0.95;
+            localAiLocked = true;
           } else if (videoModelScore <= LOCAL_UNCERTAIN_MIN) {
-            finalScore = 0.05;
+            if (!localAiLocked) finalScore = 0.05;
           } else {
-            finalScore = Math.min(LOCAL_UNCERTAIN_MAX, heuristicComposite * 0.6 + videoModelScore * 0.4);
+            if (!localAiLocked) {
+              finalScore = Math.min(
+                LOCAL_UNCERTAIN_MAX,
+                heuristicComposite * 0.6 + videoModelScore * 0.4
+              );
+            }
           }
           decisionStage = 'local_ml';
           details = `Local ML frame verdict: ${videoModelScore >= 0.5 ? 'AI generated' : 'Not AI generated'} (${videoModelScore.toFixed(2)}), temporal=${temporalScore.toFixed(2)}`;
@@ -339,6 +357,7 @@ export class VideoDetector implements Detector {
 
     // Step 3: Remote classification — send best available frame.
     const shouldEscalateRemote =
+      !localAiLocked &&
       finalScore > LOCAL_UNCERTAIN_MIN && finalScore < LOCAL_UNCERTAIN_MAX;
 
     if (options.remoteEnabled && video && shouldEscalateRemote) {
@@ -358,6 +377,7 @@ export class VideoDetector implements Detector {
               imageDataUrl: frameDataUrl,
             });
             finalScore = finalScore * 0.3 + result.score * 0.7;
+            heuristicScores.remote = result.score;
             source = 'remote';
             decisionStage = 'remote_ml';
             details = `Remote ML score: ${result.score.toFixed(2)} (blended ${finalScore.toFixed(2)})`;
@@ -378,6 +398,7 @@ export class VideoDetector implements Detector {
       source,
       decisionStage,
       localModelScore,
+      heuristicScores,
       details,
     };
 

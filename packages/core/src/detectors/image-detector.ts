@@ -599,9 +599,13 @@ export class ImageDetector implements Detector {
     const nw = img?.naturalWidth ?? 0;
     const nh = img?.naturalHeight ?? 0;
     const localScore = computeLocalImageScore(src, nw, nh);
+    const heuristicScores: Record<string, number> = {
+      metadataCdnAndDimensions: localScore,
+    };
     const isObviousMetadataAI = localScore >= OBVIOUS_METADATA_AI_THRESHOLD;
     let localModelScore: number | undefined = undefined;
     let decisionStage: DetectionResult['decisionStage'] = 'initial_heuristics';
+    let localAiLocked = isObviousMetadataAI;
     let details = isObviousMetadataAI
       ? `Initial heuristics (metadata) flagged obvious AI (${localScore.toFixed(2)})`
       : `Initial heuristics score: ${localScore.toFixed(2)}`;
@@ -615,6 +619,7 @@ export class ImageDetector implements Detector {
     if (!isObviousMetadataAI && pixelData) {
       if (quality !== 'low') {
         const visualScore = computeVisualAIScore(pixelData, PREFILTER_SIZE, PREFILTER_SIZE);
+        heuristicScores.visual = visualScore;
         // Give visual pixel analysis equal standing with URL/dimension heuristics.
         // Take the higher of the URL/dimension score or the visual score (after discount).
         // The previous *0.6 double-discount when localScore>=0.3 made visual analysis
@@ -622,6 +627,10 @@ export class ImageDetector implements Detector {
         // dimension match but no CDN URL match). Removed that double-discount.
         const visualWeight = quality === 'high' ? 0.85 : 0.75;
         combinedLocalScore = Math.max(localScore, visualScore * visualWeight);
+        if (combinedLocalScore >= LOCAL_UNCERTAIN_MAX) {
+          localAiLocked = true;
+          details = `Initial heuristics independently flagged AI (${combinedLocalScore.toFixed(2)})`;
+        }
       }
       if (img) {
         const mlDims = getMlSampleDimensions(
@@ -634,18 +643,26 @@ export class ImageDetector implements Detector {
         const mlScore = await runMlModelScore(mlPixelData, mlDims.width, mlDims.height);
         if (mlScore !== null) {
           localModelScore = mlScore;
+          heuristicScores.localMl = mlScore;
           // Use local ML first. Escalate to remote only if uncertain.
           if (mlScore >= LOCAL_UNCERTAIN_MAX) {
             combinedLocalScore = 0.95;
+            localAiLocked = true;
+            decisionStage = 'local_ml';
+            details = `Local ML independently flagged AI (${mlScore.toFixed(2)})`;
+          } else if (combinedLocalScore >= LOCAL_UNCERTAIN_MAX) {
+            decisionStage = 'initial_heuristics';
+            details = `Initial heuristics independently flagged AI (${combinedLocalScore.toFixed(2)})`;
           } else if (mlScore <= LOCAL_UNCERTAIN_MIN) {
             combinedLocalScore = 0.05;
           } else {
             combinedLocalScore = mlScore;
           }
-          decisionStage = 'local_ml';
-          details = `Local ML verdict: ${
-            combinedLocalScore >= 0.5 ? 'AI generated' : 'Not AI generated'
-          } (${combinedLocalScore.toFixed(2)})`;
+          if (decisionStage !== 'local_ml') {
+            details = `Local ML verdict: ${
+              combinedLocalScore >= 0.5 ? 'AI generated' : 'Not AI generated'
+            } (${combinedLocalScore.toFixed(2)})`;
+          }
         }
       }
     }
@@ -687,6 +704,7 @@ export class ImageDetector implements Detector {
     if (metadataDataUrl) {
       const exifData = parseExifFromDataUrl(metadataDataUrl);
       exifScore = getExifAIScore(exifData);
+      heuristicScores.exif = exifScore;
     }
 
     // ── Step 2d: C2PA / Content Credentials detection ─────────────────────────
@@ -695,10 +713,11 @@ export class ImageDetector implements Detector {
     if (metadataDataUrl) {
       const c2pa = detectC2PAFromDataUrl(metadataDataUrl);
       c2paAdjustment = c2pa.scoreAdjustment;
+      heuristicScores.c2paAdjustment = c2paAdjustment;
     }
 
     // Blend EXIF signal into combined local score (EXIF is a 15% weight)
-    if (!isObviousMetadataAI) {
+    if (!isObviousMetadataAI && !localAiLocked) {
       if (exifScore > 0) {
         combinedLocalScore = Math.min(1, combinedLocalScore * 0.85 + exifScore * 0.15);
       }
@@ -710,6 +729,7 @@ export class ImageDetector implements Detector {
     let source: DetectionResult['source'] = 'local';
     const shouldEscalateRemote =
       !isObviousMetadataAI &&
+      !localAiLocked &&
       combinedLocalScore > LOCAL_UNCERTAIN_MIN &&
       combinedLocalScore < LOCAL_UNCERTAIN_MAX;
 
@@ -727,6 +747,7 @@ export class ImageDetector implements Detector {
             imageDataUrl: dataUrl ?? undefined,
           });
           finalScore = combinedLocalScore * 0.3 + result.score * 0.7;
+          heuristicScores.remote = result.score;
           source = 'remote';
           decisionStage = 'remote_ml';
           details = `Remote ML score: ${result.score.toFixed(2)} (blended ${finalScore.toFixed(2)})`;
@@ -749,6 +770,7 @@ export class ImageDetector implements Detector {
       source,
       decisionStage,
       localModelScore,
+      heuristicScores,
       details,
     };
 

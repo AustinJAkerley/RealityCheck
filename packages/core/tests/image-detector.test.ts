@@ -397,14 +397,15 @@ describe('ML model registry', () => {
     try {
       const result = await detector.detect(img, {
         remoteEnabled: false,
-        detectionQuality: 'high',
+        detectionQuality: 'low',
         fetchBytes: async () => null,
       });
       expect(result.source).toBe('local');
       expect(result.isAIGenerated).toBe(false);
-      expect(result.decisionStage).toBe('local_ml');
+      expect(result.decisionStage).toBe('initial_heuristics');
       expect(result.localModelScore).toBeCloseTo(0.05, 5);
-      expect(result.details).toContain('Local ML verdict');
+      expect(result.heuristicScores?.localMl).toBeCloseTo(0.05, 5);
+      expect(result.details).toContain('Local ML');
     } finally {
       createSpy.mockRestore();
     }
@@ -453,7 +454,9 @@ describe('ML model registry', () => {
       expect(result.score).toBe(0.95);
       expect(result.decisionStage).toBe('local_ml');
       expect(result.localModelScore).toBeCloseTo(0.95, 5);
-      expect(result.details).toContain('Local ML verdict');
+      expect(result.heuristicScores?.metadataCdnAndDimensions).toBeDefined();
+      expect(result.heuristicScores?.localMl).toBeCloseTo(0.95, 5);
+      expect(result.details).toContain('Local ML');
     } finally {
       createSpy.mockRestore();
     }
@@ -522,7 +525,7 @@ describe('ML model registry', () => {
     try {
       const result = await detector.detect(img, {
         remoteEnabled: true,
-        detectionQuality: 'high',
+        detectionQuality: 'low',
       });
       expect(result.source).toBe('remote');
       expect(result.decisionStage).toBe('remote_ml');

@@ -25,10 +25,13 @@ RealityCheck logs include:
 - `score`
 - `source`
 - `localModelScore` (when local ML ran)
+- `heuristicScores` (per-step score breakdown, e.g. metadata/temporal/visual/localMl/remote)
 - `details`
 - `durationMs`
 
 In dev mode, both AI and Not-AI watermarks include this `detectionId`, so missed detections can be traced back to the exact console entry.
+
+You will also see skip logs for images/videos that are ignored (e.g. thumbnail overlap, too small, already processing) with their own `detectionId`.
 
 Use these to identify expensive paths:
 

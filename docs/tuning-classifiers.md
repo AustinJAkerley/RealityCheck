@@ -189,6 +189,8 @@ Current cascade behavior for media:
 2. otherwise local ML is used first in `high` mode,
 3. remote ML is only used when local score is still uncertain and remote is enabled.
 
+Important: local steps are cascading and independent for AI labels. If a step independently exceeds the AI threshold (e.g. metadata/CDN hit or local ML), later local checks do not force it back to Not-AI.
+
 ## Local model quality notes (production)
 
 - The old `64x64` local-only path is not sufficient for robust photorealistic detection on mixed search pages.
