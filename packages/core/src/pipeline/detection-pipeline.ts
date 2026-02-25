@@ -6,6 +6,9 @@ import { ContentType, DetectionResult, DetectorOptions, Detector } from '../type
 import { TextDetector } from '../detectors/text-detector.js';
 import { ImageDetector } from '../detectors/image-detector.js';
 import { VideoDetector } from '../detectors/video-detector.js';
+import { registerNonescapeMiniModel } from '../adapters/nonescape-mini-adapter.js';
+
+let localModelInitialized = false;
 
 export class DetectionPipeline {
   private readonly detectors: Map<ContentType, Detector>;
@@ -15,6 +18,10 @@ export class DetectionPipeline {
     imageDetector: Detector = new ImageDetector(),
     videoDetector: Detector = new VideoDetector()
   ) {
+    if (!localModelInitialized) {
+      registerNonescapeMiniModel();
+      localModelInitialized = true;
+    }
     this.detectors = new Map([
       ['text', textDetector],
       ['image', imageDetector],

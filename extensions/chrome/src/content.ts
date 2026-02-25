@@ -41,6 +41,26 @@ const processing = new Set<Element>();
 
 let currentSettings: ExtensionSettings | null = null;
 
+function decisionStageLabel(stage: string | undefined): string {
+  if (stage === 'local_ml') return 'Local ML';
+  if (stage === 'remote_ml') return 'Remote ML';
+  return 'Initial';
+}
+
+const BASE36_FIVE_DIGITS = 36 ** 5;
+const _seenDetectionIds = new Set<string>();
+
+function createDetectionId(kind: 'img' | 'vid'): string {
+  let id = '';
+  do {
+    const n = Math.floor(Math.random() * BASE36_FIVE_DIGITS);
+    const code = n.toString(36).toUpperCase().padStart(5, '0');
+    id = `rc-${kind}-${code}`;
+  } while (_seenDetectionIds.has(id));
+  _seenDetectionIds.add(id);
+  return id;
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function getDetectorOptions(settings: ExtensionSettings): DetectorOptions {
@@ -148,23 +168,62 @@ function removeThumbnailWatermarks(video: HTMLVideoElement): void {
 // ── Element processors ───────────────────────────────────────────────────────
 
 async function processImage(img: HTMLImageElement, settings: ExtensionSettings): Promise<void> {
-  if (handles.has(img) || processing.has(img)) return;
-  if (!img.complete || img.naturalWidth < 100 || img.naturalHeight < 100) return;
-  if (isVideoThumbnail(img)) return;
+  const detectionId = createDetectionId('img');
+  if (handles.has(img) || processing.has(img)) {
+    console.info('[RealityCheck] Image detection skipped', { detectionId, reason: 'already-processing-or-watermarked' });
+    return;
+  }
+  if (!img.complete || img.naturalWidth < 100 || img.naturalHeight < 100) {
+    console.info('[RealityCheck] Image detection skipped', { detectionId, reason: 'image-too-small-or-not-loaded' });
+    return;
+  }
+  if (isVideoThumbnail(img)) {
+    console.info('[RealityCheck] Image detection skipped', { detectionId, reason: 'video-thumbnail' });
+    return;
+  }
 
   processing.add(img);
   try {
     const opts = getDetectorOptions(settings);
+    const t0 = performance.now();
     const result = await pipeline.analyzeImage(img, opts);
+    const durationMs = Math.round((performance.now() - t0) * 100) / 100;
+    console.info('[RealityCheck] Image detection', {
+      detectionId,
+      stage: decisionStageLabel(result.decisionStage),
+      score: result.score,
+      source: result.source,
+      localModelScore: result.localModelScore,
+      heuristicScores: result.heuristicScores,
+      markedAsAI: result.isAIGenerated,
+      details: result.details,
+      durationMs,
+    });
 
     // Guard again after await: a concurrent call may have already watermarked this element.
     if (handles.has(img)) return;
 
     if (result.isAIGenerated) {
-      const handle = applyMediaWatermark(img, result.confidence, settings.watermark);
+      const handle = applyMediaWatermark(
+        img,
+        result.confidence,
+        settings.watermark,
+        decisionStageLabel(result.decisionStage),
+        result.details,
+        detectionId
+      );
       handles.set(img, handle);
     } else if (settings.devMode) {
-      handles.set(img, applyNotAIWatermark(img, settings.watermark));
+      handles.set(
+        img,
+        applyNotAIWatermark(
+          img,
+          settings.watermark,
+          decisionStageLabel(result.decisionStage),
+          result.details,
+          detectionId
+        )
+      );
     }
   } finally {
     processing.delete(img);
@@ -172,21 +231,54 @@ async function processImage(img: HTMLImageElement, settings: ExtensionSettings):
 }
 
 async function processVideo(video: HTMLVideoElement, settings: ExtensionSettings): Promise<void> {
-  if (handles.has(video) || processing.has(video)) return;
+  const detectionId = createDetectionId('vid');
+  if (handles.has(video) || processing.has(video)) {
+    console.info('[RealityCheck] Video detection skipped', { detectionId, reason: 'already-processing-or-watermarked' });
+    return;
+  }
 
   processing.add(video);
   try {
     const opts = getDetectorOptions(settings);
+    const t0 = performance.now();
     const result = await pipeline.analyzeVideo(video, opts);
+    const durationMs = Math.round((performance.now() - t0) * 100) / 100;
+    console.info('[RealityCheck] Video detection', {
+      detectionId,
+      stage: decisionStageLabel(result.decisionStage),
+      score: result.score,
+      source: result.source,
+      localModelScore: result.localModelScore,
+      heuristicScores: result.heuristicScores,
+      markedAsAI: result.isAIGenerated,
+      details: result.details,
+      durationMs,
+    });
 
     // Guard again after await: a concurrent call may have already watermarked this element.
     if (handles.has(video)) return;
 
     if (result.isAIGenerated) {
-      const handle = applyMediaWatermark(video, result.confidence, settings.watermark);
+      const handle = applyMediaWatermark(
+        video,
+        result.confidence,
+        settings.watermark,
+        decisionStageLabel(result.decisionStage),
+        result.details,
+        detectionId
+      );
       handles.set(video, handle);
     } else if (settings.devMode) {
-      handles.set(video, applyNotAIWatermark(video, settings.watermark));
+      handles.set(
+        video,
+        applyNotAIWatermark(
+          video,
+          settings.watermark,
+          decisionStageLabel(result.decisionStage),
+          result.details,
+          detectionId
+        )
+      );
     }
 
     // Remove watermarks from thumbnail images that visually overlap this video,
