@@ -16,7 +16,7 @@
  * Chat completions endpoint format:
  *   POST {AZURE_OPENAI_ENDPOINT}/deployments/{deployment}/chat/completions
  *        ?api-version={version}
- * Authentication header: `api-key: {key}` (Azure-specific, not `Authorization: Bearer`).
+ * Authentication header: `Authorization: Bearer {key}` (APIM gateway format).
  */
 
 export interface AzureOpenAIConfig {
@@ -90,7 +90,7 @@ export async function classifyImageWithAzureOpenAI(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'api-key': config.apiKey,
+      Authorization: `Bearer ${config.apiKey}`,
     },
     body: JSON.stringify({
       messages: [

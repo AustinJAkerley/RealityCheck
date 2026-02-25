@@ -64,7 +64,7 @@ export interface DetectorOptions {
   remoteEndpoint?: string;
   /**
    * API key for the remote endpoint. Required when using Azure OpenAI directly.
-   * When omitted, no `api-key` header is sent.
+   * When omitted, no auth header is sent.
    */
   remoteApiKey?: string;
   /**

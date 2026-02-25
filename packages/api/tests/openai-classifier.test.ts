@@ -87,7 +87,7 @@ describe('classifyImageWithAzureOpenAI', () => {
     expect((calledUrl as string)).toContain('/deployments/gpt-5-1-chat/chat/completions');
     expect((calledUrl as string)).toContain('api-version=2024-10-21');
     const headers = (calledInit as RequestInit).headers as Record<string, string>;
-    expect(headers['api-key']).toBe('test-api-key');
+    expect(headers['Authorization']).toBe('Bearer test-api-key');
     expect(headers['Content-Type']).toBe('application/json');
   });
 

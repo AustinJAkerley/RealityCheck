@@ -117,7 +117,7 @@ describe('AzureOpenAIAdapter', () => {
   const azureEndpoint = 'https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai';
   const apiKey = 'azure-key-123';
 
-  test('uses api-key header (not Authorization: Bearer)', async () => {
+  test('uses Authorization: Bearer header', async () => {
     const spy = mockFetch({
       choices: [{ message: { content: '{"score":0.8,"label":"ai"}' } }],
     });
@@ -125,8 +125,8 @@ describe('AzureOpenAIAdapter', () => {
     await adapter.classify('image', { imageDataUrl: TINY_PNG });
 
     const headers = (spy.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
-    expect(headers['api-key']).toBe(apiKey);
-    expect(headers['Authorization']).toBeUndefined();
+    expect(headers['Authorization']).toBe(`Bearer ${apiKey}`);
+    expect(headers['api-key']).toBeUndefined();
   });
 
   test('calls correct Azure deployment URL with api-version', async () => {

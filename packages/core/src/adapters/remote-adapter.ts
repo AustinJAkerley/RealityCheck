@@ -5,7 +5,7 @@
  * detection pipeline can swap providers without changing detector logic.
  *
  * Default flow: POST directly to the Azure APIM OpenAI endpoint
- * (DEFAULT_REMOTE_ENDPOINT) using AzureOpenAIAdapter with api-key auth.
+ * (DEFAULT_REMOTE_ENDPOINT) using AzureOpenAIAdapter with Bearer token auth.
  * API keys are only required when calling the endpoint directly.
  */
 import type { ContentType, RemoteAdapter, RemoteClassificationResult, RemotePayload } from '../types.js';
@@ -118,8 +118,8 @@ export class OpenAIAdapter implements RemoteAdapter {
  * The chat completions URL is constructed as:
  *   {baseUrl}/deployments/{deployment}/chat/completions?api-version={version}
  *
- * Authentication uses the `api-key` header (Azure-specific) rather than
- * the standard `Authorization: Bearer` header.
+ * Authentication uses the `Authorization: Bearer` header, which is the format
+ * expected by Azure API Management (APIM) gateways.
  *
  * Supports both image (GPT-4o vision) and text classification.
  */
@@ -195,7 +195,7 @@ export class AzureOpenAIAdapter implements RemoteAdapter {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'api-key': this.apiKey,
+        Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({
         messages,
