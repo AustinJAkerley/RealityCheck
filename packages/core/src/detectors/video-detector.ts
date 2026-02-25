@@ -135,6 +135,7 @@ const FRAME_ANALYSIS_SIZE = 64;
 const OBVIOUS_METADATA_AI_THRESHOLD = 0.7;
 const LOCAL_UNCERTAIN_MIN = 0.25;
 const LOCAL_UNCERTAIN_MAX = 0.75;
+const VIDEO_LOCAL_AI_THRESHOLD = 0.45;
 
 function getMlFrameDimensions(
   width: number,
@@ -311,17 +312,19 @@ export class VideoDetector implements Detector {
         // meaningful weight when there is no URL match.
         const temporalBoost = Math.min(0.3, temporalScore);
         const visualBoost = videoVisualScore * 0.35;
+        const heuristicComposite = Math.min(1, localScore + temporalBoost + visualBoost);
         if (hasVideoModelScore) {
           // Use local ML first. Escalate to remote only if uncertain.
           if (videoModelScore >= LOCAL_UNCERTAIN_MAX) {
-            finalScore = 0.95;
+            const corroboratedByHeuristics = localScore >= 0.7 || temporalScore >= 0.2;
+            finalScore = corroboratedByHeuristics ? 0.95 : 0.35;
           } else if (videoModelScore <= LOCAL_UNCERTAIN_MIN) {
             finalScore = 0.05;
           } else {
-            finalScore = videoModelScore;
+            finalScore = Math.min(LOCAL_UNCERTAIN_MAX, heuristicComposite * 0.6 + videoModelScore * 0.4);
           }
           decisionStage = 'local_ml';
-          details = `Local ML frame verdict: ${videoModelScore >= 0.5 ? 'AI generated' : 'Not AI generated'} (${videoModelScore.toFixed(2)})`;
+          details = `Local ML frame verdict: ${videoModelScore >= 0.5 ? 'AI generated' : 'Not AI generated'} (${videoModelScore.toFixed(2)}), temporal=${temporalScore.toFixed(2)}`;
         } else {
           const modelBoost = videoModelScore * 0.45;
           finalScore = Math.min(1, localScore + temporalBoost + visualBoost + modelBoost);
@@ -364,7 +367,7 @@ export class VideoDetector implements Detector {
     }
 
     // Use a lower threshold for local-only results (same rationale as image detector).
-    const aiThreshold = source === 'local' ? 0.25 : 0.35;
+    const aiThreshold = source === 'local' ? VIDEO_LOCAL_AI_THRESHOLD : 0.35;
     const result: DetectionResult = {
       contentType: 'video',
       isAIGenerated: finalScore >= aiThreshold,

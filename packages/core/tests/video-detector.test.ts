@@ -85,7 +85,8 @@ describe('VideoDetector', () => {
       });
       expect(result.contentType).toBe('video');
       expect(runMock).toHaveBeenCalled();
-      expect(result.score).toBe(0.95);
+      expect(result.score).toBeLessThanOrEqual(0.75);
+      expect(result.isAIGenerated).toBe(false);
       expect(result.decisionStage).toBe('local_ml');
       expect(result.details).toContain('Local ML frame verdict');
     } finally {
