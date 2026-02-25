@@ -24,12 +24,7 @@ import { DEFAULT_REMOTE_ENDPOINT } from '../types.js';
 import { DetectionCache } from '../utils/cache.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
 import { hashUrl, hashDataUrl } from '../utils/hash.js';
-<<<<<<< HEAD
-import { createRemoteAdapter } from '../adapters/remote-adapter.js';
 import { computeVisualAIScore, runMlModelScore } from './image-detector.js';
-=======
-import { computeVisualAIScore } from './image-detector.js';
->>>>>>> main
 
 const AI_VIDEO_PATTERNS: RegExp[] = [
   /sora\.openai/i,
