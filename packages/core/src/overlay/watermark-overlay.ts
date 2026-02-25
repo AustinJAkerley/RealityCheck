@@ -79,7 +79,7 @@ const CSS_TEMPLATE = `
 }
 .rc-watermark-label .rc-badge {
   display: block;
-  font-size: 0.5em;
+  font-size: 0.56em;
   margin-top: 2px;
   font-weight: 400;
   letter-spacing: 0.04em;

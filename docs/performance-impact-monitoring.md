@@ -20,7 +20,7 @@ If UX is clearly smoother with the extension disabled, collect timings from step
 
 RealityCheck logs include:
 
-- `detectionId` (also shown on watermark as `ID: ...` for fast log matching)
+- `detectionId` (also shown on watermark as `ID: ...`; short `rc-<type>-<5 char>` code for fast log matching)
 - `stage` (`Initial`, `Local ML`, `Remote ML`)
 - `score`
 - `source`

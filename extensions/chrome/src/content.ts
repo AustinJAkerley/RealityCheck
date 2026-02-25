@@ -46,8 +46,18 @@ function decisionStageLabel(stage: string | undefined): string {
   return 'Initial';
 }
 
+const BASE36_FIVE_DIGITS = 36 ** 5;
+const _seenDetectionIds = new Set<string>();
+
 function createDetectionId(kind: 'img' | 'vid'): string {
-  return `rc-${kind}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  let id = '';
+  do {
+    const n = Math.floor(Math.random() * BASE36_FIVE_DIGITS);
+    const code = n.toString(36).toUpperCase().padStart(5, '0');
+    id = `rc-${kind}-${code}`;
+  } while (_seenDetectionIds.has(id));
+  _seenDetectionIds.add(id);
+  return id;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
