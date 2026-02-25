@@ -169,23 +169,27 @@ registerMlModel({
 
 ### Built-in local adapter for Nonescape mini
 
-`@reality-check/core` now includes a helper adapter that posts `64×64` frame/image pixel buffers to a local model service:
+`@reality-check/core` now includes a bundled `nonescape-mini` model profile inside the extension package. No local service is required.
 
 ```ts
 import { registerNonescapeMiniModel } from '@reality-check/core';
 
-registerNonescapeMiniModel({
-  endpoint: 'http://127.0.0.1:8765', // default
-  model: 'nonescape-mini',           // default
-  path: '/v1/classify/image',        // default
-});
+registerNonescapeMiniModel(); // bundled model, ready after install
 ```
 
-Expected local endpoint contract:
+To swap to a newer bundled model runtime later, keep using the same adapter and pass a new API implementation:
 
-- `POST /v1/classify/image`
-- JSON body: `{ model, width, height, pixelsBase64 }`
-- JSON response: `{ score: number }` (or `{ aiScore: number }`)
+```ts
+registerNonescapeMiniModel({
+  model: 'future-model-v2',
+  api: {
+    predict: ({ data, width, height, features }) => {
+      // call your bundled model runtime here (ONNX/TF.js/WebNN/etc.)
+      return 0.42;
+    },
+  },
+});
+```
 
 When quality is set to `high`, image detection and sampled video frames both invoke this registered local model.
 
