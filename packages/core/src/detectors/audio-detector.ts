@@ -18,7 +18,7 @@
  * - On-device ONNX model trained on mel-spectrogram features of TTS vs. real audio.
  * - ONNX Runtime Web inference against audio samples captured via Web Audio API.
  */
-import { DetectionResult, Detector, DetectorOptions, RemotePayload } from '../types.js';
+import { DetectionResult, DetectionQuality, Detector, DetectorOptions, RemotePayload } from '../types.js';
 import { DEFAULT_REMOTE_ENDPOINT } from '../types.js';
 import { DetectionCache } from '../utils/cache.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
@@ -96,7 +96,11 @@ function scoreToConfidence(score: number): DetectionResult['confidence'] {
 export class AudioDetector implements Detector {
   readonly contentType = 'audio' as const;
   private readonly cache = new DetectionCache<DetectionResult>();
-  private readonly rateLimiter = new RateLimiter(60, 60_000);
+  private readonly rateLimiters: Record<DetectionQuality, RateLimiter> = {
+    low: new RateLimiter(10, 60_000),
+    medium: new RateLimiter(30, 60_000),
+    high: new RateLimiter(60, 60_000),
+  };
 
   async detect(content: string | HTMLElement, options: DetectorOptions): Promise<DetectionResult> {
     const audio = content instanceof HTMLAudioElement ? content : null;
@@ -121,7 +125,8 @@ export class AudioDetector implements Detector {
     // Step 3: Remote escalation when enabled (inconclusive range)
     const inconclusive = localScore >= 0.15 && localScore <= 0.65;
     if (options.remoteEnabled && (matchesAIAudioUrl(src) || inconclusive)) {
-      if (this.rateLimiter.consume()) {
+      const rl = this.rateLimiters[options.detectionQuality ?? 'medium'];
+      if (rl.consume()) {
         try {
           const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
           const apiKey = options.remoteApiKey || '';
@@ -134,7 +139,7 @@ export class AudioDetector implements Detector {
           source = 'remote';
         } catch (err) {
           // Remote call failed — return the token so it can be used for other content
-          this.rateLimiter.returnToken();
+          rl.returnToken();
           console.warn('[RealityCheck] Remote audio classification failed:', err instanceof Error ? err.message : err);
         }
       }

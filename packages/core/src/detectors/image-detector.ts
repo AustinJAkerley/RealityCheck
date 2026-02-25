@@ -539,7 +539,11 @@ function downscaleImage(img: HTMLImageElement, maxDim = 128): string | null {
 export class ImageDetector implements Detector {
   readonly contentType = 'image' as const;
   private readonly cache = new DetectionCache<DetectionResult>();
-  private readonly rateLimiter = new RateLimiter(60, 60_000);
+  private readonly rateLimiters: Record<DetectionQuality, RateLimiter> = {
+    low: new RateLimiter(10, 60_000),
+    medium: new RateLimiter(30, 60_000),
+    high: new RateLimiter(60, 60_000),
+  };
 
   async detect(content: string | HTMLElement, options: DetectorOptions): Promise<DetectionResult> {
     const img = content instanceof HTMLImageElement ? content : null;
@@ -652,7 +656,8 @@ export class ImageDetector implements Detector {
     // ── Step 3: Remote classification ─────────────────────────────────────────
     // Always send to remote when enabled and the image passed the pre-filter.
     if (options.remoteEnabled && img) {
-      if (this.rateLimiter.consume()) {
+      const rl = this.rateLimiters[quality];
+      if (rl.consume()) {
         try {
           const dataUrl = downscaleImage(img);
           const imageHash = hashDataUrl(dataUrl ?? src);
@@ -674,7 +679,7 @@ export class ImageDetector implements Detector {
           source = 'remote';
         } catch (err) {
           // Remote call failed — return the token so it can be used for other content
-          this.rateLimiter.returnToken();
+          rl.returnToken();
           console.warn('[RealityCheck] Remote image classification failed:', err instanceof Error ? err.message : err);
         }
       }

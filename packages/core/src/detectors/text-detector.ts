@@ -14,7 +14,7 @@
  * These heuristics have known limitations (false positives/negatives).
  * See docs/architecture.md for accuracy discussion and mitigation strategies.
  */
-import { DetectionResult, Detector, DetectorOptions, RemotePayload } from '../types.js';
+import { DetectionResult, DetectionQuality, Detector, DetectorOptions, RemotePayload } from '../types.js';
 import { DEFAULT_REMOTE_ENDPOINT } from '../types.js';
 import { DetectionCache } from '../utils/cache.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
@@ -139,7 +139,11 @@ const INCONCLUSIVE_HIGH = 0.65;
 export class TextDetector implements Detector {
   readonly contentType = 'text' as const;
   private readonly cache = new DetectionCache<DetectionResult>();
-  private readonly rateLimiter = new RateLimiter(60, 60_000);
+  private readonly rateLimiters: Record<DetectionQuality, RateLimiter> = {
+    low: new RateLimiter(10, 60_000),
+    medium: new RateLimiter(30, 60_000),
+    high: new RateLimiter(60, 60_000),
+  };
 
   async detect(content: string | HTMLElement, options: DetectorOptions): Promise<DetectionResult> {
     const text = typeof content === 'string' ? content : (content as HTMLElement).innerText ?? '';
@@ -156,7 +160,8 @@ export class TextDetector implements Detector {
     // Escalate to remote only when the local score is inconclusive
     const inconclusive = localScore >= INCONCLUSIVE_LOW && localScore <= INCONCLUSIVE_HIGH;
     if (options.remoteEnabled && inconclusive) {
-      if (this.rateLimiter.consume()) {
+      const rl = this.rateLimiters[options.detectionQuality ?? 'medium'];
+      if (rl.consume()) {
         try {
           const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
           const apiKey = options.remoteApiKey || '';
@@ -168,7 +173,7 @@ export class TextDetector implements Detector {
           source = 'remote';
         } catch (err) {
           // Remote call failed — return the token so it can be used for other content
-          this.rateLimiter.returnToken();
+          rl.returnToken();
           console.warn('[RealityCheck] Remote text classification failed:', err instanceof Error ? err.message : err);
         }
       }
