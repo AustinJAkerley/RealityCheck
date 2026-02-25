@@ -362,7 +362,7 @@ describe('ML model registry', () => {
     expect(score).toBe(1);
   });
 
-  test('high-quality image scoring follows local model verdict', async () => {
+  test('high-quality image scoring returns non-AI verdict when local model score is below threshold', async () => {
     registerMlModel({
       async run() {
         return 0.05;
@@ -402,6 +402,52 @@ describe('ML model registry', () => {
       });
       expect(result.source).toBe('local');
       expect(result.isAIGenerated).toBe(false);
+    } finally {
+      createSpy.mockRestore();
+    }
+  });
+
+  test('high-quality image scoring returns AI verdict when local model score exceeds threshold', async () => {
+    registerMlModel({
+      async run() {
+        return 0.95;
+      },
+    });
+    const detector = new ImageDetector();
+    const img = document.createElement('img');
+    Object.defineProperty(img, 'complete', { configurable: true, value: true });
+    Object.defineProperty(img, 'naturalWidth', { configurable: true, value: 1024 });
+    Object.defineProperty(img, 'naturalHeight', { configurable: true, value: 1024 });
+    Object.defineProperty(img, 'src', {
+      configurable: true,
+      value: 'https://example.com/photo.png',
+    });
+
+    const pixels = noisyPixels(SIZE);
+    const originalCreateElement = document.createElement.bind(document);
+    const createSpy = jest.spyOn(document, 'createElement');
+    createSpy.mockImplementation(((tagName: string) => {
+      if (tagName !== 'canvas') return originalCreateElement(tagName);
+      return {
+        width: 0,
+        height: 0,
+        getContext: () => ({
+          drawImage: () => undefined,
+          getImageData: () => ({ data: pixels }),
+        }),
+        toDataURL: () => 'data:image/jpeg;base64,mock',
+      } as unknown as HTMLCanvasElement;
+    }) as typeof document.createElement);
+
+    try {
+      const result = await detector.detect(img, {
+        remoteEnabled: false,
+        detectionQuality: 'high',
+        fetchBytes: async () => null,
+      });
+      expect(result.source).toBe('local');
+      expect(result.isAIGenerated).toBe(true);
+      expect(result.score).toBe(0.95);
     } finally {
       createSpy.mockRestore();
     }
