@@ -262,7 +262,7 @@ export class VideoDetector implements Detector {
           if (frameDataUrl) {
             const imageHash = hashDataUrl(frameDataUrl);
             const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
-            const adapter = createRemoteAdapter(endpoint);
+            const adapter = createRemoteAdapter(endpoint, options.remoteApiKey || '');
             const result = await adapter.classify('video', {
               imageHash,
               imageDataUrl: frameDataUrl,

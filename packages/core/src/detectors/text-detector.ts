@@ -160,7 +160,7 @@ export class TextDetector implements Detector {
       if (this.rateLimiter.consume()) {
         try {
           const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
-          const adapter = createRemoteAdapter(endpoint);
+          const adapter = createRemoteAdapter(endpoint, options.remoteApiKey || '');
           const result = await adapter.classify('text', { text: text.slice(0, 2000) });
           // Blend local + remote scores (weight remote more heavily)
           finalScore = localScore * 0.3 + result.score * 0.7;

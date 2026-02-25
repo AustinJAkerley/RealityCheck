@@ -4,9 +4,9 @@
  * All remote adapters implement the RemoteAdapter interface so the
  * detection pipeline can swap providers without changing detector logic.
  *
- * Default flow: POST to DEFAULT_REMOTE_ENDPOINT with no auth header.
- * The Azure-hosted proxy handles downstream authentication; users do not
- * need to provide API keys. API keys are only used for custom dev endpoints.
+ * Default flow: POST directly to the Azure APIM OpenAI endpoint
+ * (DEFAULT_REMOTE_ENDPOINT) using AzureOpenAIAdapter with api-key auth.
+ * API keys are only required when calling the endpoint directly.
  */
 import type { ContentType, RemoteAdapter, RemoteClassificationResult, RemotePayload } from '../types.js';
 import { DEFAULT_REMOTE_ENDPOINT } from '../types.js';

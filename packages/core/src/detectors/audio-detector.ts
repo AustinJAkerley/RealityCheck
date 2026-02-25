@@ -125,7 +125,7 @@ export class AudioDetector implements Detector {
       if (this.rateLimiter.consume()) {
         try {
           const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
-          const adapter = createRemoteAdapter(endpoint);
+          const adapter = createRemoteAdapter(endpoint, options.remoteApiKey || '');
           // RemotePayload uses imageHash as a generic content identifier;
           // for audio we send the URL hash as the content fingerprint.
           const result = await adapter.classify('audio', {

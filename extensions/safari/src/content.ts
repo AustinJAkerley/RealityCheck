@@ -50,6 +50,7 @@ function getDetectorOptions(settings: ExtensionSettings): DetectorOptions {
     remoteEnabled: settings.remoteEnabled,
     detectionQuality: settings.detectionQuality,
     remoteEndpoint: settings.remoteEndpoint || undefined,
+    remoteApiKey: settings.remoteApiKey || undefined,
     // Fetch image bytes via the background service worker, which is not
     // subject to CORS restrictions, enabling EXIF/C2PA analysis on cross-origin images.
     fetchBytes: (url: string) =>

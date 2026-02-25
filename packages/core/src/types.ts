@@ -22,12 +22,13 @@ export type WatermarkPosition = 'center' | 'top-left' | 'top-right' | 'bottom';
 export type DetectionQuality = 'low' | 'medium' | 'high';
 
 /**
- * Default hosted endpoint — our Azure-hosted AI classifier proxy.
- * Users do not need to provide an API key; the proxy authenticates the extension
- * via standard extension certificate verification.
+ * Default remote endpoint — the hackathon Azure OpenAI APIM gateway.
+ * Extensions call this endpoint directly for AI classification.
+ * The endpoint includes the /openai path; deployment and api-version
+ * are appended by AzureOpenAIAdapter.
  * Can be overridden in the Advanced settings for development purposes.
  */
-export const DEFAULT_REMOTE_ENDPOINT = 'https://api.realitycheck.ai/v1/classify';
+export const DEFAULT_REMOTE_ENDPOINT = 'https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai';
 
 export interface DetectionResult {
   contentType: ContentType;
@@ -61,6 +62,11 @@ export interface DetectorOptions {
    * Only needed for advanced/development use.
    */
   remoteEndpoint?: string;
+  /**
+   * API key for the remote endpoint. Required when using Azure OpenAI directly.
+   * When omitted, no `api-key` header is sent.
+   */
+  remoteApiKey?: string;
   /**
    * Optional callback to fetch raw image bytes as a base64 data URL.
    *

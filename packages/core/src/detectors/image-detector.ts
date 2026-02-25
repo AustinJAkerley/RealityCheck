@@ -629,7 +629,7 @@ export class ImageDetector implements Detector {
           const dataUrl = downscaleImage(img);
           const imageHash = hashDataUrl(dataUrl ?? src);
           const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
-          const adapter = createRemoteAdapter(endpoint);
+          const adapter = createRemoteAdapter(endpoint, options.remoteApiKey || '');
           const result = await adapter.classify('image', {
             imageHash,
             imageDataUrl: dataUrl ?? undefined,

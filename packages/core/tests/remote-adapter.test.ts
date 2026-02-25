@@ -32,14 +32,14 @@ afterEach(() => {
 // ── createRemoteAdapter factory ───────────────────────────────────────────────
 
 describe('createRemoteAdapter', () => {
-  test('returns GenericHttpAdapter for the default endpoint', () => {
+  test('returns AzureOpenAIAdapter for the default endpoint', () => {
     const adapter = createRemoteAdapter();
-    expect(adapter).toBeInstanceOf(GenericHttpAdapter);
+    expect(adapter).toBeInstanceOf(AzureOpenAIAdapter);
   });
 
-  test('returns GenericHttpAdapter when endpoint is empty', () => {
+  test('returns GenericHttpAdapter when endpoint is empty (falls back to default APIM URL)', () => {
     const adapter = createRemoteAdapter('');
-    expect(adapter).toBeInstanceOf(GenericHttpAdapter);
+    expect(adapter).toBeInstanceOf(AzureOpenAIAdapter);
   });
 
   test('returns OpenAIAdapter for api.openai.com', () => {
