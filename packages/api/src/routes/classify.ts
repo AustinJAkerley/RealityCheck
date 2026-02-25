@@ -26,6 +26,7 @@ import { analyzeImage } from '../analysis/image-analyzer';
 import {
   getAzureOpenAIConfig,
   classifyImageWithAzureOpenAI,
+  classifyVideoWithAzureOpenAI,
 } from '../analysis/openai-classifier';
 
 export const classifyRouter = Router();
@@ -121,7 +122,26 @@ classifyRouter.post('/', async (req: Request, res: Response) => {
     return;
   }
 
-  // Fallback for unsupported content types (text, video, audio):
+  if (contentType === 'video') {
+    const azureConfig = getAzureOpenAIConfig();
+    if (azureConfig) {
+      try {
+        const result = await classifyVideoWithAzureOpenAI(
+          azureConfig,
+          typeof imageDataUrl === 'string' ? imageDataUrl : undefined,
+          typeof imageUrl === 'string' ? imageUrl : undefined
+        );
+        res.json({ score: result.score, label: result.label });
+        return;
+      } catch {
+        // Azure OpenAI call failed — fall through to neutral score
+      }
+    }
+    res.json({ score: 0.5, label: 'uncertain' });
+    return;
+  }
+
+  // Fallback for unsupported content types (text, audio):
   // return a neutral uncertain score so the client can blend it with local results.
   res.json({ score: 0.5, label: 'uncertain' });
 });

@@ -60,6 +60,18 @@ describe('POST /v1/classify', () => {
     expect(res.body.label).toBe('uncertain');
   });
 
+  test('returns 200 with neutral score for video contentType without Azure config', async () => {
+    delete process.env.AZURE_OPENAI_ENDPOINT;
+    delete process.env.AZURE_OPENAI_API_KEY;
+    const res = await post(app, {
+      contentType: 'video',
+      imageDataUrl: 'data:image/png;base64,abc123',
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.score).toBe(0.5);
+    expect(res.body.label).toBe('uncertain');
+  });
+
   test('returns higher score for a known AI CDN URL', async () => {
     const res = await post(app, {
       contentType: 'image',

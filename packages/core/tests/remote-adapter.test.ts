@@ -207,6 +207,35 @@ describe('AzureOpenAIAdapter', () => {
     expect(result.label).toBe('ai');
   });
 
+  test('handles video content type with imageDataUrl (frame)', async () => {
+    const spy = mockResponsesApi('{"score":0.8,"label":"ai"}');
+    const adapter = new AzureOpenAIAdapter(apiKey, azureEndpoint);
+    const result = await adapter.classify('video', { imageDataUrl: TINY_PNG });
+
+    expect(result.score).toBeCloseTo(0.8);
+    expect(result.label).toBe('ai');
+
+    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+    const userInput = body.input[1];
+    expect(userInput.role).toBe('user');
+    const imgPart = userInput.content[0];
+    expect(imgPart.type).toBe('input_image');
+    expect(imgPart.image_url).toBe(TINY_PNG);
+  });
+
+  test('handles video content type with imageUrl fallback', async () => {
+    const spy = mockResponsesApi('{"score":0.7,"label":"ai"}');
+    const adapter = new AzureOpenAIAdapter(apiKey, azureEndpoint);
+    const result = await adapter.classify('video', { imageUrl: 'https://example.com/video.mp4' });
+
+    expect(result.score).toBeCloseTo(0.7);
+    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+    const userInput = body.input[1];
+    const imgPart = userInput.content[0];
+    expect(imgPart.type).toBe('input_image');
+    expect(imgPart.image_url).toBe('https://example.com/video.mp4');
+  });
+
   test('returns unsupported for audio contentType', async () => {
     const adapter = new AzureOpenAIAdapter(apiKey, azureEndpoint);
     const result = await adapter.classify('audio', {});
