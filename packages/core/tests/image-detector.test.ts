@@ -12,6 +12,7 @@ import {
   scoreLowTier,
   scoreMediumTier,
   runPhotorealismPreFilter,
+  getDownscaleMaxDim,
 } from '../src/detectors/image-detector';
 import { ImageDetector } from '../src/detectors/image-detector';
 
@@ -353,4 +354,36 @@ describe('ML model registry', () => {
   });
 });
 
+// ── Detection quality resolution ──────────────────────────────────────────────
+
+describe('getDownscaleMaxDim (detection quality resolution)', () => {
+  test('low quality uses the smallest resolution', () => {
+    expect(getDownscaleMaxDim('low')).toBeLessThan(getDownscaleMaxDim('medium'));
+  });
+
+  test('high quality uses the largest resolution', () => {
+    expect(getDownscaleMaxDim('high')).toBeGreaterThan(getDownscaleMaxDim('medium'));
+  });
+
+  test('resolutions are strictly ordered: low < medium < high', () => {
+    const low = getDownscaleMaxDim('low');
+    const medium = getDownscaleMaxDim('medium');
+    const high = getDownscaleMaxDim('high');
+    expect(low).toBeLessThan(medium);
+    expect(medium).toBeLessThan(high);
+  });
+
+  test('low quality dimension is a positive integer', () => {
+    const dim = getDownscaleMaxDim('low');
+    expect(dim).toBeGreaterThan(0);
+    expect(Number.isInteger(dim)).toBe(true);
+  });
+
+  test('returns documented dimension values for each quality tier', () => {
+    // Documented values: low=64, medium=128, high=512
+    expect(getDownscaleMaxDim('low')).toBe(64);
+    expect(getDownscaleMaxDim('medium')).toBe(128);
+    expect(getDownscaleMaxDim('high')).toBe(512);
+  });
+});
 

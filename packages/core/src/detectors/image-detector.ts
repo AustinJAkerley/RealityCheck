@@ -515,6 +515,20 @@ function scoreToConfidence(score: number): DetectionResult['confidence'] {
 }
 
 /**
+ * Returns the maximum image dimension (in pixels) used when downscaling for
+ * remote transmission, based on the requested detection quality tier.
+ *
+ * - low:    64 px — fastest; minimal bandwidth usage
+ * - medium: 128 px — balanced default
+ * - high:   512 px — highest fidelity for the remote classifier
+ */
+export function getDownscaleMaxDim(quality: DetectionQuality): number {
+  if (quality === 'high') return 512;
+  if (quality === 'medium') return 128;
+  return 64; // low
+}
+
+/**
  * Downscale an HTMLImageElement for remote transmission.
  * Returns null for cross-origin images (would taint the canvas).
  */
@@ -659,7 +673,7 @@ export class ImageDetector implements Detector {
       const rl = this.rateLimiters[quality];
       if (rl.consume()) {
         try {
-          const dataUrl = downscaleImage(img);
+          const dataUrl = downscaleImage(img, getDownscaleMaxDim(quality));
           const imageHash = hashDataUrl(dataUrl ?? src);
           const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
           const apiKey = options.remoteApiKey || '';
