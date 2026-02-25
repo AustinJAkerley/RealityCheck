@@ -244,11 +244,19 @@ describe('AzureOpenAIAdapter', () => {
     expect(imgPart.image_url).toBe('https://example.com/photo.jpg');
   });
 
-  test('throws on non-2xx Azure response', async () => {
+  test('returns error fallback on non-2xx Azure response', async () => {
     mockResponsesApi('{}', false, 401);
     const adapter = new AzureOpenAIAdapter(apiKey, azureEndpoint);
-    await expect(adapter.classify('image', { imageDataUrl: TINY_PNG })).rejects.toThrow(
-      'Azure OpenAI API HTTP 401'
-    );
+    const result = await adapter.classify('image', { imageDataUrl: TINY_PNG });
+    expect(result.score).toBe(0.5);
+    expect(result.label).toBe('error');
+  });
+
+  test('returns error fallback on network failure', async () => {
+    jest.spyOn(global, 'fetch').mockRejectedValue(new Error('Network error'));
+    const adapter = new AzureOpenAIAdapter(apiKey, azureEndpoint);
+    const result = await adapter.classify('image', { imageDataUrl: TINY_PNG });
+    expect(result.score).toBe(0.5);
+    expect(result.label).toBe('error');
   });
 });
