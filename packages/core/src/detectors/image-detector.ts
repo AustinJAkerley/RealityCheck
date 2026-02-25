@@ -39,6 +39,9 @@ const PREFILTER_SIZE = 64;
  * we prefer to analyse too many images rather than miss real AI photos.
  */
 const PHOTOREALISM_SKIP_THRESHOLD = 0.20;
+const OBVIOUS_METADATA_AI_THRESHOLD = 0.7;
+const LOCAL_UNCERTAIN_MIN = 0.25;
+const LOCAL_UNCERTAIN_MAX = 0.75;
 
 // ── ML model registry ────────────────────────────────────────────────────────
 
@@ -89,6 +92,24 @@ export function registerMlModel(runner: MlModelRunner): void {
  */
 export function isMlModelAvailable(): boolean {
   return _mlModelRunner !== null;
+}
+
+/**
+ * Run the registered ML model on arbitrary pixel data.
+ * Returns null when no model is registered or inference fails.
+ */
+export async function runMlModelScore(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number
+): Promise<number | null> {
+  if (_mlModelRunner === null) return null;
+  try {
+    const score = await _mlModelRunner.run(data, width, height);
+    return Math.max(0, Math.min(1, score));
+  } catch {
+    return null;
+  }
 }
 
 // ── Pre-filter helper functions ──────────────────────────────────────────────
@@ -353,14 +374,10 @@ export function scoreMediumTier(data: Uint8ClampedArray): number {
  * Falls back to Medium-tier canvas analysis when no model is registered.
  */
 async function scoreHighTier(data: Uint8ClampedArray): Promise<number> {
-  if (_mlModelRunner !== null) {
-    try {
-      const mlScore = await _mlModelRunner.run(data, PREFILTER_SIZE, PREFILTER_SIZE);
-      // Blend: ML model result weighted 70%, canvas analysis 30%
-      return scoreMediumTier(data) * 0.3 + mlScore * 0.7;
-    } catch {
-      // ML inference failed — fall back to medium tier
-    }
+  const mlScore = await runMlModelScore(data, PREFILTER_SIZE, PREFILTER_SIZE);
+  if (mlScore !== null) {
+    // Blend: ML model result weighted 70%, canvas analysis 30%
+    return scoreMediumTier(data) * 0.3 + mlScore * 0.7;
   }
   // Fall back to Medium tier when no model is registered
   return scoreMediumTier(data);
@@ -411,6 +428,42 @@ function extractPixelData(img: HTMLImageElement): Uint8ClampedArray | null {
   } catch {
     return null;
   }
+}
+
+function extractPixelDataAtDimensions(
+  img: HTMLImageElement,
+  width: number,
+  height: number
+): Uint8ClampedArray | null {
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0, width, height);
+    return ctx.getImageData(0, 0, width, height).data;
+  } catch {
+    return null;
+  }
+}
+
+function getMlSampleDimensions(
+  width: number,
+  height: number,
+  quality: DetectionQuality
+): { width: number; height: number } {
+  if (quality === 'high') {
+    return { width, height };
+  }
+  if (quality === 'medium') {
+    return { width: Math.max(1, Math.round(width / 2)), height: Math.max(1, Math.round(height / 2)) };
+  }
+  const scale = Math.min(1, 192 / Math.max(width, height));
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
 }
 
 /**
@@ -514,6 +567,17 @@ function scoreToConfidence(score: number): DetectionResult['confidence'] {
   return 'low';
 }
 
+function formatHeuristicStep(
+  label: string,
+  value: number | undefined,
+  threshold: number
+): string {
+  if (typeof value !== 'number') return `${label} = n/a`;
+  return `${label} = ${value.toFixed(2)} : threshold (${threshold.toFixed(2)}) => ${
+    value >= threshold ? 'AI' : 'Not AI'
+  }`;
+}
+
 /**
  * Downscale an HTMLImageElement for remote transmission.
  * Returns null for cross-origin images (would taint the canvas).
@@ -549,14 +613,62 @@ export class ImageDetector implements Detector {
     const img = content instanceof HTMLImageElement ? content : null;
     const src = img?.src ?? (typeof content === 'string' ? content : '');
     const cacheKey = hashUrl(src);
+    const quality = options.detectionQuality ?? 'medium';
 
     const cached = this.cache.get(cacheKey);
     if (cached) return cached;
 
+    // Remote-enabled mode: rely solely on remote classification.
+    if (options.remoteEnabled) {
+      let finalScore = 0;
+      let details = 'Remote-only mode enabled';
+      const heuristicScores: Record<string, number> = {};
+      const rl = this.rateLimiters[quality];
+      if (rl.consume()) {
+        try {
+          const dataUrl = img ? downscaleImage(img) : undefined;
+          const imageHash = hashDataUrl(dataUrl ?? src);
+          const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
+          const apiKey = options.remoteApiKey || '';
+          const payload: RemotePayload = {
+            imageHash,
+            imageDataUrl: dataUrl ?? undefined,
+            imageUrl: dataUrl ? undefined : src,
+          };
+          if (!options.remoteClassify) {
+            throw new Error('remoteClassify callback is required when remoteEnabled is true');
+          }
+          const remote = await options.remoteClassify(endpoint, apiKey, 'image', payload);
+          finalScore = remote.label === 'error' ? 0 : remote.score;
+          heuristicScores.remote = finalScore;
+          details =
+            remote.label === 'error'
+              ? 'Remote-only mode: remote classification returned error'
+              : `Remote-only mode: remote score ${remote.score.toFixed(2)}`;
+        } catch (err) {
+          rl.returnToken();
+          details = `Remote-only mode failed: ${err instanceof Error ? err.message : 'unknown error'}`;
+          console.warn('[RealityCheck] Remote image classification failed:', err instanceof Error ? err.message : err);
+        }
+      }
+
+      const result: DetectionResult = {
+        contentType: 'image',
+        isAIGenerated: finalScore >= 0.35,
+        confidence: scoreToConfidence(finalScore),
+        score: finalScore,
+        source: 'remote',
+        decisionStage: 'remote_ml',
+        heuristicScores,
+        details,
+      };
+      this.cache.set(cacheKey, result);
+      return result;
+    }
+
     // ── Step 1: Photorealism pre-filter ───────────────────────────────────────
     // Only runs on actual HTMLImageElement instances; string URLs skip the canvas step.
     const pixelData = img ? extractPixelData(img) : null;
-    const quality = options.detectionQuality ?? 'medium';
     const preFilter = await runPhotorealismPreFilter(pixelData, quality);
 
     if (!preFilter.isPhotorealistic) {
@@ -578,22 +690,72 @@ export class ImageDetector implements Detector {
     const nw = img?.naturalWidth ?? 0;
     const nh = img?.naturalHeight ?? 0;
     const localScore = computeLocalImageScore(src, nw, nh);
+    const heuristicScores: Record<string, number> = {
+      metadataCdnAndDimensions: localScore,
+    };
+    const isObviousMetadataAI = localScore >= OBVIOUS_METADATA_AI_THRESHOLD;
+    let localModelScore: number | undefined = undefined;
+    let decisionStage: DetectionResult['decisionStage'] = 'initial_heuristics';
+    let localAiLocked = isObviousMetadataAI;
+    let details = isObviousMetadataAI
+      ? `Initial heuristics (metadata) flagged obvious AI (${localScore.toFixed(2)})`
+      : `Initial heuristics score: ${localScore.toFixed(2)}`;
 
     // ── Step 2b: Visual AI scoring (medium / high tiers) ─────────────────────
     // Uses per-pixel statistics from the pre-filter canvas sample to detect
     // diffusion-model characteristics (uniform saturation, balanced channels,
     // well-exposed luminance). Improves detection of AI images that don't
     // match known CDN patterns or dimension heuristics.
-    let combinedLocalScore = localScore;
-    if (pixelData && quality !== 'low') {
-      const visualScore = computeVisualAIScore(pixelData, PREFILTER_SIZE, PREFILTER_SIZE);
-      // Give visual pixel analysis equal standing with URL/dimension heuristics.
-      // Take the higher of the URL/dimension score or the visual score (after discount).
-      // The previous *0.6 double-discount when localScore>=0.3 made visual analysis
-      // nearly irrelevant for the most common case (re-uploaded AI images with some
-      // dimension match but no CDN URL match). Removed that double-discount.
-      const visualWeight = quality === 'high' ? 0.85 : 0.75;
-      combinedLocalScore = Math.max(localScore, visualScore * visualWeight);
+    let combinedLocalScore = isObviousMetadataAI ? 0.95 : localScore;
+    if (!isObviousMetadataAI && pixelData) {
+      if (quality !== 'low') {
+        const visualScore = computeVisualAIScore(pixelData, PREFILTER_SIZE, PREFILTER_SIZE);
+        heuristicScores.visual = visualScore;
+        // Give visual pixel analysis equal standing with URL/dimension heuristics.
+        // Take the higher of the URL/dimension score or the visual score (after discount).
+        // The previous *0.6 double-discount when localScore>=0.3 made visual analysis
+        // nearly irrelevant for the most common case (re-uploaded AI images with some
+        // dimension match but no CDN URL match). Removed that double-discount.
+        const visualWeight = quality === 'high' ? 0.85 : 0.75;
+        combinedLocalScore = Math.max(localScore, visualScore * visualWeight);
+        if (combinedLocalScore >= LOCAL_UNCERTAIN_MAX) {
+          localAiLocked = true;
+          details = `Initial heuristics independently flagged AI (${combinedLocalScore.toFixed(2)})`;
+        }
+      }
+      if (img) {
+        const mlDims = getMlSampleDimensions(
+          Math.max(1, img.naturalWidth || PREFILTER_SIZE),
+          Math.max(1, img.naturalHeight || PREFILTER_SIZE),
+          quality
+        );
+        const mlPixelData =
+          extractPixelDataAtDimensions(img, mlDims.width, mlDims.height) ?? pixelData;
+        const mlScore = await runMlModelScore(mlPixelData, mlDims.width, mlDims.height);
+        if (mlScore !== null) {
+          localModelScore = mlScore;
+          heuristicScores.localMl = mlScore;
+          // Use local ML first. Escalate to remote only if uncertain.
+          if (mlScore >= LOCAL_UNCERTAIN_MAX) {
+            combinedLocalScore = 0.95;
+            localAiLocked = true;
+            decisionStage = 'local_ml';
+            details = `Local ML independently flagged AI (${mlScore.toFixed(2)})`;
+          } else if (combinedLocalScore >= LOCAL_UNCERTAIN_MAX) {
+            decisionStage = 'initial_heuristics';
+            details = `Initial heuristics independently flagged AI (${combinedLocalScore.toFixed(2)})`;
+          } else if (mlScore <= LOCAL_UNCERTAIN_MIN) {
+            combinedLocalScore = 0.05;
+          } else {
+            combinedLocalScore = mlScore;
+          }
+          if (decisionStage !== 'local_ml') {
+            details = `Local ML verdict: ${
+              combinedLocalScore >= 0.5 ? 'AI generated' : 'Not AI generated'
+            } (${combinedLocalScore.toFixed(2)})`;
+          }
+        }
+      }
     }
 
     // ── Step 2c: EXIF metadata analysis ──────────────────────────────────────
@@ -603,7 +765,7 @@ export class ImageDetector implements Detector {
     // When options.fetchBytes is provided (e.g. via a background service worker
     // that is not CORS-restricted), use it. Otherwise fall back to direct fetch.
     let metadataDataUrl: string | null = null;
-    if (src && /^https?:\/\//.test(src)) {
+    if (!isObviousMetadataAI && src && /^https?:\/\//.test(src)) {
       try {
         if (options.fetchBytes) {
           // Extension-provided fetch: bypasses CORS (background SW context)
@@ -633,6 +795,7 @@ export class ImageDetector implements Detector {
     if (metadataDataUrl) {
       const exifData = parseExifFromDataUrl(metadataDataUrl);
       exifScore = getExifAIScore(exifData);
+      heuristicScores.exif = exifScore;
     }
 
     // ── Step 2d: C2PA / Content Credentials detection ─────────────────────────
@@ -641,17 +804,25 @@ export class ImageDetector implements Detector {
     if (metadataDataUrl) {
       const c2pa = detectC2PAFromDataUrl(metadataDataUrl);
       c2paAdjustment = c2pa.scoreAdjustment;
+      heuristicScores.c2paAdjustment = c2paAdjustment;
     }
 
     // Blend EXIF signal into combined local score (EXIF is a 15% weight)
-    if (exifScore > 0) {
-      combinedLocalScore = Math.min(1, combinedLocalScore * 0.85 + exifScore * 0.15);
+    if (!isObviousMetadataAI && !localAiLocked) {
+      if (exifScore > 0) {
+        combinedLocalScore = Math.min(1, combinedLocalScore * 0.85 + exifScore * 0.15);
+      }
+      // Apply C2PA adjustment (negative = more authentic → reduce score)
+      combinedLocalScore = Math.max(0, combinedLocalScore + c2paAdjustment);
     }
-    // Apply C2PA adjustment (negative = more authentic → reduce score)
-    combinedLocalScore = Math.max(0, combinedLocalScore + c2paAdjustment);
 
     let finalScore = combinedLocalScore;
     let source: DetectionResult['source'] = 'local';
+    const shouldEscalateRemote =
+      !isObviousMetadataAI &&
+      !localAiLocked &&
+      combinedLocalScore > LOCAL_UNCERTAIN_MIN &&
+      combinedLocalScore < LOCAL_UNCERTAIN_MAX;
 
     // ── Step 3: Remote classification ─────────────────────────────────────────
     // Always send to remote when enabled and the image passed the pre-filter.
@@ -676,6 +847,7 @@ export class ImageDetector implements Detector {
           if (!options.remoteClassify) throw new Error('remoteClassify callback required');
           const result = await options.remoteClassify(endpoint, apiKey, 'image', payload);
           finalScore = combinedLocalScore * 0.3 + result.score * 0.7;
+          heuristicScores.remote = result.score;
           source = 'remote';
         } catch (err) {
           // Remote call failed — return the token so it can be used for other content
@@ -696,7 +868,20 @@ export class ImageDetector implements Detector {
       confidence: scoreToConfidence(finalScore),
       score: finalScore,
       source,
+      decisionStage,
+      localModelScore,
+      heuristicScores,
+      details,
     };
+
+    const heuristicSummary = [
+      formatHeuristicStep('CDN/Dimension Score', heuristicScores.metadataCdnAndDimensions, 0.7),
+      formatHeuristicStep('Visual Score', heuristicScores.visual, 0.75),
+      formatHeuristicStep('Local ML Score', heuristicScores.localMl, 0.75),
+      formatHeuristicStep('Remote ML Score', heuristicScores.remote, 0.5),
+      formatHeuristicStep('EXIF Score', heuristicScores.exif, 0.5),
+    ].join(' | ');
+    result.details = result.details ? `${result.details} | ${heuristicSummary}` : heuristicSummary;
 
     this.cache.set(cacheKey, result);
     return result;

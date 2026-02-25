@@ -167,6 +167,71 @@ registerMlModel({
 });
 ```
 
+### Built-in local adapter for Nonescape mini
+
+`@reality-check/core` now includes a bundled `nonescape-mini` model profile inside the extension package. No local service is required.
+
+```ts
+import { registerNonescapeMiniModel } from '@reality-check/core';
+
+registerNonescapeMiniModel(); // bundled model, ready after install
+```
+
+In `high` mode, the bundled model returns a binary local verdict (`AI generated` vs `Not AI generated`) for image samples and sampled video frames.
+
+For shell-based local model checks (throw images at the bundled model and print the exact response format used by the extension), see:
+
+- `docs/local-model-shell-testing.md`
+
+Current cascade behavior for media:
+
+1. obvious metadata/URL heuristic matches can immediately label AI,
+2. otherwise local ML is used first in `high` mode,
+3. remote ML is only used when local score is still uncertain and remote is enabled.
+
+When `remoteEnabled=true`, detectors now run in **remote-only mode**:
+
+- local heuristics and local ML are skipped for final classification,
+- the final label comes solely from remote ML (`decisionStage: remote_ml`).
+
+Important: local steps are cascading and independent for AI labels. If a step independently exceeds the AI threshold (e.g. metadata/CDN hit or local ML), later local checks do not force it back to Not-AI.
+
+## Local model quality notes (production)
+
+- The old `64x64` local-only path is not sufficient for robust photorealistic detection on mixed search pages.
+- Local model input resolution now follows quality mode:
+  - **high**: full media resolution to local ML
+  - **medium**: half resolution
+  - **low**: reduced to max side `192`
+- This preserves more texture/detail at higher quality levels and reduces quality collapse on photorealistic content.
+
+Recommended production strategy:
+
+1. keep **obvious metadata/URL AI hits** as immediate AI verdicts,
+2. run **local ML first** for photorealistic candidates,
+3. escalate to **remote ML** only when local confidence is uncertain,
+4. use logging (`stage`, `details`, `durationMs`) to monitor false positives and latency.
+
+### Should we use a newer model than Nonescape mini?
+
+Yes—if production accuracy is below target, swap to a newer photorealistic-focused model via the same adapter contract. Keep Nonescape as a baseline, then compare newer models against your labeled benchmark set before rollout.
+
+To swap to a newer bundled model runtime later, keep using the same adapter and pass a new API implementation:
+
+```ts
+registerNonescapeMiniModel({
+  model: 'future-model-v2',
+  api: {
+    predict: ({ data, width, height, features }) => {
+      // call your bundled model runtime here (ONNX/TF.js/WebNN/etc.)
+      return 0.42;
+    },
+  },
+});
+```
+
+When quality is set to `high`, image detection and sampled video frames both invoke this registered local model.
+
 Recommended open models trained on real-vs-AI datasets:
 
 | Model | Size | Dataset | Notes |
