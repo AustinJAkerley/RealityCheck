@@ -46,9 +46,11 @@ const builtInModels: Record<string, NonescapeModelApi> = {
 };
 
 function classifyFromScore(score: number): number {
-  // Nonescape mini emits a binary class decision for extension use.
-  // Return a strong bounded confidence to keep detector thresholds stable.
-  return score >= 0.5 ? 0.95 : 0.05;
+  // Calibrate away from hard binary outputs so uncertain samples can escalate
+  // to remote ML in the cascade. Keep strong confidence near edges.
+  if (score >= 0.9) return 0.95;
+  if (score <= 0.1) return 0.05;
+  return Math.max(0, Math.min(1, score));
 }
 
 function extractFeatures(data: Uint8ClampedArray): NonescapeModelFeatures {

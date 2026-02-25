@@ -533,4 +533,43 @@ describe('ML model registry', () => {
       fetchMock.mockRestore();
     }
   });
+
+  test('high-quality local ML receives higher-resolution image input', async () => {
+    const runMock = jest.fn().mockResolvedValue(0.95);
+    registerMlModel({ run: runMock });
+    const detector = new ImageDetector();
+    const img = document.createElement('img');
+    Object.defineProperty(img, 'complete', { configurable: true, value: true });
+    Object.defineProperty(img, 'naturalWidth', { configurable: true, value: 1600 });
+    Object.defineProperty(img, 'naturalHeight', { configurable: true, value: 1000 });
+    Object.defineProperty(img, 'src', { configurable: true, value: 'https://example.com/photo.png' });
+
+    const pixels = noisyPixels(SIZE);
+    const originalCreateElement = document.createElement.bind(document);
+    const createSpy = jest.spyOn(document, 'createElement');
+    createSpy.mockImplementation(((tagName: string) => {
+      if (tagName !== 'canvas') return originalCreateElement(tagName);
+      return {
+        width: 0,
+        height: 0,
+        getContext: () => ({
+          drawImage: () => undefined,
+          getImageData: () => ({ data: pixels }),
+        }),
+        toDataURL: () => 'data:image/jpeg;base64,mock',
+      } as unknown as HTMLCanvasElement;
+    }) as typeof document.createElement);
+
+    try {
+      await detector.detect(img, {
+        remoteEnabled: false,
+        detectionQuality: 'high',
+      });
+      expect(runMock).toHaveBeenCalled();
+      expect(runMock.mock.calls[0][1]).toBe(192);
+      expect(runMock.mock.calls[0][2]).toBe(192);
+    } finally {
+      createSpy.mockRestore();
+    }
+  });
 });

@@ -21,7 +21,7 @@ describe('Nonescape mini adapter', () => {
     const pixels = new Uint8ClampedArray([10, 20, 30, 255, 40, 50, 60, 255]);
     const score = await runner.run(pixels, 2, 1);
 
-    expect(score).toBeCloseTo(0.05, 5);
+    expect(score).toBeCloseTo(0.23, 5);
     expect(predict).toHaveBeenCalledTimes(1);
     expect(predict).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -39,5 +39,15 @@ describe('Nonescape mini adapter', () => {
     });
     const score = await runner.run(new Uint8ClampedArray([1, 2, 3, 255]), 1, 1);
     expect(score).toBe(0.95);
+  });
+
+  test('returns strong non-AI class score only at very low confidence edge', async () => {
+    const runner = createNonescapeMiniRunner({
+      api: {
+        predict: () => 0.08,
+      },
+    });
+    const score = await runner.run(new Uint8ClampedArray([1, 2, 3, 255]), 1, 1);
+    expect(score).toBe(0.05);
   });
 });

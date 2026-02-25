@@ -43,6 +43,7 @@ const PHOTOREALISM_SKIP_THRESHOLD = 0.20;
 const OBVIOUS_METADATA_AI_THRESHOLD = 0.7;
 const LOCAL_UNCERTAIN_MIN = 0.25;
 const LOCAL_UNCERTAIN_MAX = 0.75;
+const LOCAL_ML_SIZE = 192;
 
 // ── ML model registry ────────────────────────────────────────────────────────
 
@@ -404,6 +405,20 @@ function extractPixelData(img: HTMLImageElement): Uint8ClampedArray | null {
   }
 }
 
+function extractPixelDataAtSize(img: HTMLImageElement, size: number): Uint8ClampedArray | null {
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0, size, size);
+    return ctx.getImageData(0, 0, size, size).data;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Run the photorealism pre-filter on raw RGBA pixel data (for testing, provide mock data).
  * When `data` is null (canvas unavailable / cross-origin), the image is treated as
@@ -585,7 +600,10 @@ export class ImageDetector implements Detector {
       const visualWeight = quality === 'high' ? 0.85 : 0.75;
       combinedLocalScore = Math.max(localScore, visualScore * visualWeight);
       if (quality === 'high') {
-        const mlScore = await runMlModelScore(pixelData, PREFILTER_SIZE, PREFILTER_SIZE);
+        const highResPixelData = img ? extractPixelDataAtSize(img, LOCAL_ML_SIZE) : null;
+        const mlPixelData = highResPixelData ?? pixelData;
+        const mlInputSize = highResPixelData ? LOCAL_ML_SIZE : PREFILTER_SIZE;
+        const mlScore = await runMlModelScore(mlPixelData, mlInputSize, mlInputSize);
         if (mlScore !== null) {
           // In high mode, use local ML first. Escalate to remote only if uncertain.
           if (mlScore >= LOCAL_UNCERTAIN_MAX) {

@@ -189,6 +189,21 @@ Current cascade behavior for media:
 2. otherwise local ML is used first in `high` mode,
 3. remote ML is only used when local score is still uncertain and remote is enabled.
 
+## Local model quality notes (production)
+
+- The old `64x64` local-only path is not sufficient for robust photorealistic detection on mixed search pages.
+- High mode now feeds the local model with larger samples:
+  - images: `192x192`
+  - video frames: `160x160`
+- This preserves more texture/detail and improves local model signal before remote escalation.
+
+Recommended production strategy:
+
+1. keep **obvious metadata/URL AI hits** as immediate AI verdicts,
+2. run **local ML first** for photorealistic candidates,
+3. escalate to **remote ML** only when local confidence is uncertain,
+4. use logging (`stage`, `details`, `durationMs`) to monitor false positives and latency.
+
 To swap to a newer bundled model runtime later, keep using the same adapter and pass a new API implementation:
 
 ```ts

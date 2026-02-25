@@ -132,6 +132,7 @@ function seekTo(video: HTMLVideoElement, time: number, timeoutMs = 500): Promise
 const MULTI_FRAME_COUNT = 5;
 /** Downscale size for temporal frame comparison */
 const FRAME_ANALYSIS_SIZE = 64;
+const ML_FRAME_SIZE = 160;
 const OBVIOUS_METADATA_AI_THRESHOLD = 0.7;
 const LOCAL_UNCERTAIN_MIN = 0.25;
 const LOCAL_UNCERTAIN_MAX = 0.75;
@@ -162,6 +163,7 @@ async function analyzeVideoFrames(
 
   const frameDataUrls: string[] = [];
   const framePixels: Uint8ClampedArray[] = [];
+  const mlFramePixels: Uint8ClampedArray[] = [];
 
   // Sample at evenly-spaced intervals, skipping the very start and end
   const step = duration / (MULTI_FRAME_COUNT + 1);
@@ -171,6 +173,8 @@ async function analyzeVideoFrames(
     await seekTo(video, step * i);
     const pixels = captureFramePixels(video, FRAME_ANALYSIS_SIZE, FRAME_ANALYSIS_SIZE);
     if (pixels) framePixels.push(pixels);
+    const mlPixels = captureFramePixels(video, ML_FRAME_SIZE, ML_FRAME_SIZE);
+    if (mlPixels) mlFramePixels.push(mlPixels);
     const dataUrl = captureVideoFrame(video);
     if (dataUrl) frameDataUrls.push(dataUrl);
   }
@@ -213,7 +217,7 @@ async function analyzeVideoFrames(
   let hasModelScore = false;
   if (quality === 'high') {
     const modelScores = await Promise.all(
-      framePixels.map((px) => runMlModelScore(px, FRAME_ANALYSIS_SIZE, FRAME_ANALYSIS_SIZE))
+      mlFramePixels.map((px) => runMlModelScore(px, ML_FRAME_SIZE, ML_FRAME_SIZE))
     );
     const usableScores = modelScores.filter((s): s is number => typeof s === 'number');
     if (usableScores.length > 0) {

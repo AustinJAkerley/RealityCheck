@@ -277,4 +277,63 @@ describe('VideoDetector', () => {
       fetchMock.mockRestore();
     }
   });
+
+  test('high-quality video local ML receives higher-resolution frame input', async () => {
+    const runMock = jest.fn().mockResolvedValue(0.95);
+    registerMlModel({ run: runMock });
+
+    const detector = new VideoDetector();
+    const video = document.createElement('video');
+    Object.defineProperty(video, 'duration', { configurable: true, value: 12 });
+    Object.defineProperty(video, 'videoWidth', { configurable: true, value: 640 });
+    Object.defineProperty(video, 'videoHeight', { configurable: true, value: 360 });
+    Object.defineProperty(video, 'currentSrc', {
+      configurable: true,
+      value: 'https://example.com/video.mp4',
+    });
+
+    let currentTime = 0;
+    Object.defineProperty(video, 'currentTime', {
+      configurable: true,
+      get: () => currentTime,
+      set: (value: number) => {
+        currentTime = value;
+        setTimeout(() => video.dispatchEvent(new Event('seeked')), 0);
+      },
+    });
+
+    const originalCreateElement = document.createElement.bind(document);
+    const createSpy = jest.spyOn(document, 'createElement');
+    createSpy.mockImplementation(((tagName: string) => {
+      if (tagName !== 'canvas') return originalCreateElement(tagName);
+      const data = new Uint8ClampedArray(64 * 64 * 4);
+      for (let i = 0; i < data.length; i += 4) {
+        data[i] = 150;
+        data[i + 1] = 150;
+        data[i + 2] = 150;
+        data[i + 3] = 255;
+      }
+      return {
+        width: 0,
+        height: 0,
+        getContext: () => ({
+          drawImage: () => undefined,
+          getImageData: () => ({ data }),
+        }),
+        toDataURL: () => 'data:image/jpeg;base64,frame',
+      } as unknown as HTMLCanvasElement;
+    }) as typeof document.createElement);
+
+    try {
+      await detector.detect(video, {
+        remoteEnabled: false,
+        detectionQuality: 'high',
+      });
+      expect(runMock).toHaveBeenCalled();
+      expect(runMock.mock.calls[0][1]).toBe(160);
+      expect(runMock.mock.calls[0][2]).toBe(160);
+    } finally {
+      createSpy.mockRestore();
+    }
+  });
 });
