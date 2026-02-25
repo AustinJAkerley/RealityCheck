@@ -72,6 +72,40 @@ describe('POST /v1/classify', () => {
     expect(res.body.label).toBe('uncertain');
   });
 
+  test('returns 200 with neutral score for video with videoFrames without Azure config', async () => {
+    delete process.env.AZURE_OPENAI_ENDPOINT;
+    delete process.env.AZURE_OPENAI_API_KEY;
+    const res = await post(app, {
+      contentType: 'video',
+      videoFrames: ['data:image/png;base64,abc', 'data:image/png;base64,def'],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.score).toBe(0.5);
+    expect(res.body.label).toBe('uncertain');
+  });
+
+  test('returns 400 when videoFrames is not an array', async () => {
+    const res = await post(app, { contentType: 'video', videoFrames: 'not-an-array' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/array/i);
+  });
+
+  test('returns 400 when videoFrames exceeds 20 items', async () => {
+    const frames = Array(21).fill('data:image/png;base64,abc');
+    const res = await post(app, { contentType: 'video', videoFrames: frames });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/20/);
+  });
+
+  test('returns 400 when a videoFrames item is not a data: URI', async () => {
+    const res = await post(app, {
+      contentType: 'video',
+      videoFrames: ['data:image/png;base64,abc', 'http://example.com/frame.jpg'],
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/data:/i);
+  });
+
   test('returns higher score for a known AI CDN URL', async () => {
     const res = await post(app, {
       contentType: 'image',

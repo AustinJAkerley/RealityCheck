@@ -7,8 +7,9 @@
  *    Captures up to 5 frames at evenly-spaced timestamps and computes:
  *    - Frame difference variance (low variance = temporal inconsistency signal)
  *    - AI visual scoring on individual frames
- * 3. If remoteEnabled: send the most-representative frame to the remote
- *    classifier and blend with URL + temporal scores.
+ * 3. If remoteEnabled: send quality-based frames at 0.25s intervals to the remote
+ *    classifier (5 frames for low, 10 for medium, 20 for high quality) and blend
+ *    with URL + temporal scores.
  *
  * Frame-level deep-fake detection requires a dedicated model (e.g. FaceForensics++
  * based classifiers). In local-only mode we combine URL heuristics with
@@ -132,6 +133,38 @@ const MULTI_FRAME_COUNT = 5;
 /** Downscale size for temporal frame comparison */
 const FRAME_ANALYSIS_SIZE = 64;
 
+/** Quality-based frame counts for remote video classification (sampled at 0.25s intervals) */
+const REMOTE_FRAME_COUNTS: Record<DetectionQuality, number> = {
+  low: 5,
+  medium: 10,
+  high: 20,
+};
+
+/**
+ * Capture N frames at fixed 0.25s intervals for remote classification.
+ * Sampling begins at t=0.25s (not t=0) to avoid unloaded or black frames
+ * that are common at the very start of a video.
+ * Stops early if the video duration is exceeded.
+ * Returns as many data-URL frames as were successfully captured.
+ */
+async function captureFramesForRemote(
+  video: HTMLVideoElement,
+  count: number
+): Promise<string[]> {
+  if (video.videoWidth === 0 || video.videoHeight === 0) return [];
+  const frames: string[] = [];
+  const savedTime = video.currentTime;
+  for (let i = 0; i < count; i++) {
+    const time = 0.25 * (i + 1);
+    if (isFinite(video.duration) && video.duration > 0 && time > video.duration) break;
+    await seekTo(video, time);
+    const frame = captureVideoFrame(video);
+    if (frame) frames.push(frame);
+  }
+  await seekTo(video, savedTime);
+  return frames;
+}
+
 /**
  * Sample multiple frames from the video and compute temporal consistency.
  *
@@ -253,23 +286,30 @@ export class VideoDetector implements Detector {
       }
     }
 
-    // Step 3: Remote classification — send best available frame.
+    // Step 3: Remote classification — send quality-based frames at 0.25s intervals.
     if (options.remoteEnabled && video) {
-      const rl = this.rateLimiters[options.detectionQuality ?? 'medium'];
+      const quality = options.detectionQuality ?? 'medium';
+      const rl = this.rateLimiters[quality];
       if (rl.consume()) {
         try {
-          // Prefer frames from multi-frame analysis; fall back to a fresh single-frame
-          // capture only when multi-frame analysis returned no frames (e.g. video not
-          // yet loaded, zero dimensions). Both paths can return null on cross-origin.
-          const frameDataUrl =
-            capturedFrames.length > 0 ? capturedFrames[0] : captureVideoFrame(video);
-          if (frameDataUrl) {
-            const imageHash = hashDataUrl(frameDataUrl);
+          const remoteFrameCount = REMOTE_FRAME_COUNTS[quality];
+          const remoteFrames = await captureFramesForRemote(video, remoteFrameCount);
+          // Fall back to a locally-captured frame if no remote frames were obtained
+          // (e.g. video not yet loaded or cross-origin).
+          const fallbackFrame =
+            remoteFrames.length === 0
+              ? (capturedFrames.length > 0 ? capturedFrames[0] : captureVideoFrame(video))
+              : null;
+          const primaryFrame = remoteFrames.length > 0 ? remoteFrames[0] : fallbackFrame;
+          if (primaryFrame) {
+            const imageHash = hashDataUrl(primaryFrame);
             const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
             const apiKey = options.remoteApiKey || '';
             const payload: RemotePayload = {
               imageHash,
-              imageDataUrl: frameDataUrl,
+              ...(remoteFrames.length > 0
+                ? { videoFrames: remoteFrames }
+                : { imageDataUrl: fallbackFrame ?? undefined }),
             };
             if (!options.remoteClassify) throw new Error('remoteClassify callback required');
             const result = await options.remoteClassify(endpoint, apiKey, 'video', payload);

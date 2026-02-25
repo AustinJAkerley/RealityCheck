@@ -223,6 +223,42 @@ describe('AzureOpenAIAdapter', () => {
     expect(imgPart.image_url).toBe(TINY_PNG);
   });
 
+  test('handles video content type with multiple videoFrames', async () => {
+    const spy = mockResponsesApi('{"score":0.85,"label":"ai"}');
+    const adapter = new AzureOpenAIAdapter(apiKey, azureEndpoint);
+    const frames = [TINY_PNG, TINY_PNG, TINY_PNG];
+    const result = await adapter.classify('video', { videoFrames: frames });
+
+    expect(result.score).toBeCloseTo(0.85);
+
+    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+    const userInput = body.input[1];
+    // All frames should be sent as input_image items
+    expect(userInput.content).toHaveLength(4); // 3 images + 1 text
+    for (let i = 0; i < 3; i++) {
+      expect(userInput.content[i].type).toBe('input_image');
+      expect(userInput.content[i].image_url).toBe(TINY_PNG);
+    }
+    // Text part should mention the frame count
+    const textPart = userInput.content[3];
+    expect(textPart.type).toBe('input_text');
+    expect(textPart.text).toContain('3');
+  });
+
+  test('videoFrames takes precedence over imageDataUrl for video', async () => {
+    const spy = mockResponsesApi('{"score":0.9,"label":"ai"}');
+    const adapter = new AzureOpenAIAdapter(apiKey, azureEndpoint);
+    const frames = [TINY_PNG, TINY_PNG];
+    await adapter.classify('video', { imageDataUrl: TINY_PNG, videoFrames: frames });
+
+    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+    const userInput = body.input[1];
+    // Should have 2 images from videoFrames (not 1 from imageDataUrl) + 1 text
+    expect(userInput.content).toHaveLength(3);
+    expect(userInput.content[0].type).toBe('input_image');
+    expect(userInput.content[1].type).toBe('input_image');
+  });
+
   test('handles video content type with imageUrl fallback', async () => {
     const spy = mockResponsesApi('{"score":0.7,"label":"ai"}');
     const adapter = new AzureOpenAIAdapter(apiKey, azureEndpoint);

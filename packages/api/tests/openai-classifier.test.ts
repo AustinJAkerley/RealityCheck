@@ -229,7 +229,7 @@ describe('classifyVideoWithAzureOpenAI', () => {
     expect(body.input[0].content).toMatch(/video/i);
   });
 
-  test('sends input_image and input_text types for video frame', async () => {
+  test('sends input_image and input_text types for single video frame', async () => {
     const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
       ok: true,
       json: async () => responsesApiResponse('{"score":0.85,"label":"ai"}'),
@@ -242,6 +242,45 @@ describe('classifyVideoWithAzureOpenAI', () => {
     expect(userInput.content[0].type).toBe('input_image');
     expect(userInput.content[0].image_url).toBe(TINY_PNG_DATA_URL);
     expect(userInput.content[1].type).toBe('input_text');
+  });
+
+  test('sends multiple input_image items when videoFrames is provided', async () => {
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => responsesApiResponse('{"score":0.9,"label":"ai"}'),
+    } as unknown as Response);
+
+    const frames = [TINY_PNG_DATA_URL, TINY_PNG_DATA_URL, TINY_PNG_DATA_URL];
+    await classifyVideoWithAzureOpenAI(mockConfig, undefined, undefined, frames);
+
+    const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
+    const userInput = body.input[1];
+    // 3 input_image + 1 input_text
+    expect(userInput.content).toHaveLength(4);
+    for (let i = 0; i < 3; i++) {
+      expect(userInput.content[i].type).toBe('input_image');
+      expect(userInput.content[i].image_url).toBe(TINY_PNG_DATA_URL);
+    }
+    const textPart = userInput.content[3];
+    expect(textPart.type).toBe('input_text');
+    expect(textPart.text).toContain('3');
+  });
+
+  test('videoFrames takes precedence over imageDataUrl', async () => {
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => responsesApiResponse('{"score":0.9,"label":"ai"}'),
+    } as unknown as Response);
+
+    const frames = [TINY_PNG_DATA_URL, TINY_PNG_DATA_URL];
+    await classifyVideoWithAzureOpenAI(mockConfig, TINY_PNG_DATA_URL, undefined, frames);
+
+    const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
+    const userInput = body.input[1];
+    // Should have 2 images from videoFrames (not 1 from imageDataUrl) + 1 text
+    expect(userInput.content).toHaveLength(3);
+    expect(userInput.content[0].type).toBe('input_image');
+    expect(userInput.content[1].type).toBe('input_image');
   });
 
   test('returns ai label when score is high', async () => {

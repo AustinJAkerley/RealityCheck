@@ -47,10 +47,13 @@ const MAX_HASH_LENGTH = 128;
 /** Maximum accepted image URL length. */
 const MAX_URL_LENGTH = 2048;
 
+/** Maximum number of video frames accepted per request (matches high-quality frame count). */
+const MAX_VIDEO_FRAMES = 20;
+
 classifyRouter.post('/', async (req: Request, res: Response) => {
   const body = req.body as Record<string, unknown>;
 
-  const { contentType, imageDataUrl, imageHash, imageUrl } = body;
+  const { contentType, imageDataUrl, imageHash, imageUrl, videoFrames } = body;
 
   // ── Validate contentType ─────────────────────────────────────────────────
   if (!isSupportedContentType(contentType)) {
@@ -92,6 +95,32 @@ classifyRouter.post('/', async (req: Request, res: Response) => {
     }
   }
 
+  // ── Validate optional videoFrames ─────────────────────────────────────────
+  if (videoFrames !== undefined) {
+    if (!Array.isArray(videoFrames)) {
+      res.status(400).json({ error: 'videoFrames must be an array' });
+      return;
+    }
+    if (videoFrames.length > MAX_VIDEO_FRAMES) {
+      res.status(400).json({ error: `videoFrames must contain at most ${MAX_VIDEO_FRAMES} items` });
+      return;
+    }
+    for (const frame of videoFrames) {
+      if (typeof frame !== 'string') {
+        res.status(400).json({ error: 'Each videoFrames item must be a string' });
+        return;
+      }
+      if (!frame.startsWith('data:')) {
+        res.status(400).json({ error: 'Each videoFrames item must be a data: URI' });
+        return;
+      }
+      if (frame.length > MAX_DATA_URL_LENGTH) {
+        res.status(400).json({ error: 'A videoFrames item exceeds maximum allowed size' });
+        return;
+      }
+    }
+  }
+
   // ── Analyse ──────────────────────────────────────────────────────────────
   // For image content: try Azure OpenAI vision first (when configured), then
   // fall back to the heuristic analyzeImage implementation.
@@ -129,7 +158,8 @@ classifyRouter.post('/', async (req: Request, res: Response) => {
         const result = await classifyVideoWithAzureOpenAI(
           azureConfig,
           typeof imageDataUrl === 'string' ? imageDataUrl : undefined,
-          typeof imageUrl === 'string' ? imageUrl : undefined
+          typeof imageUrl === 'string' ? imageUrl : undefined,
+          Array.isArray(videoFrames) ? (videoFrames as string[]) : undefined
         );
         res.json({ score: result.score, label: result.label });
         return;

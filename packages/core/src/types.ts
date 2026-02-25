@@ -182,6 +182,12 @@ export interface RemotePayload {
   imageHash?: string;
   /** Original image URL — used as a fallback by vision-capable adapters when imageDataUrl is unavailable (e.g. cross-origin canvas taint). */
   imageUrl?: string;
+  /**
+   * Multiple video frames (data URLs) sampled at 0.25s intervals for multi-frame
+   * video analysis. Count is quality-based: 5 (low), 10 (medium), 20 (high).
+   * When present, takes precedence over `imageDataUrl` for video classification.
+   */
+  videoFrames?: string[];
 }
 
 export interface RemoteClassificationResult {
