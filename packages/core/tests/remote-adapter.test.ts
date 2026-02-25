@@ -135,14 +135,13 @@ describe('AzureOpenAIAdapter', () => {
     expect(headers['api-key']).toBeUndefined();
   });
 
-  test('calls Responses API URL (/v1/responses)', async () => {
+  test('calls correct deployment-based Responses API URL', async () => {
     const spy = mockResponsesApi('{"score":0.7,"label":"ai"}');
     const adapter = new AzureOpenAIAdapter(apiKey, azureEndpoint, 'my-deployment');
     await adapter.classify('image', { imageDataUrl: TINY_PNG });
 
     const url = spy.mock.calls[0][0] as string;
-    expect(url).toBe(`${azureEndpoint}/v1/responses`);
-    // Verify model is in the request body, not the URL
+    expect(url).toBe(`${azureEndpoint}/deployments/my-deployment/responses?api-version=2024-10-21`);
     const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
     expect(body.model).toBe('my-deployment');
   });
@@ -182,7 +181,7 @@ describe('AzureOpenAIAdapter', () => {
     await adapter.classify('image', { imageDataUrl: TINY_PNG });
 
     const url = spy.mock.calls[0][0] as string;
-    expect(url).toBe(`${azureEndpoint}/v1/responses`);
+    expect(url).toBe(`${azureEndpoint}/deployments/gpt-5-1-chat/responses?api-version=2024-10-21`);
   });
 
   test('returns ai classification result', async () => {

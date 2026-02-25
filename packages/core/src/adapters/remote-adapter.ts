@@ -116,7 +116,7 @@ export class OpenAIAdapter implements RemoteAdapter {
  *   https://{resource}.openai.azure.com/openai                     (direct)
  *
  * The Responses API URL is constructed as:
- *   {baseUrl}/v1/responses
+ *   {baseUrl}/deployments/{deployment}/responses?api-version={apiVersion}
  *
  * Authentication uses the `Authorization: Bearer` header, which is the format
  * expected by Azure API Management (APIM) gateways.
@@ -126,14 +126,17 @@ export class OpenAIAdapter implements RemoteAdapter {
 export class AzureOpenAIAdapter implements RemoteAdapter {
   private readonly baseUrl: string;
   private readonly deployment: string;
+  private readonly apiVersion: string;
 
   constructor(
     private readonly apiKey: string,
     baseUrl: string,
     deployment = 'gpt-5-1-chat',
+    apiVersion = '2024-10-21',
   ) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.deployment = deployment;
+    this.apiVersion = apiVersion;
   }
 
   async classify(
@@ -184,7 +187,8 @@ export class AzureOpenAIAdapter implements RemoteAdapter {
       return { score: 0.5, label: 'unsupported' };
     }
 
-    const url = `${this.baseUrl}/v1/responses`;
+    const url =
+      `${this.baseUrl}/deployments/${this.deployment}/responses?api-version=${this.apiVersion}`;
 
     const response = await fetch(url, {
       method: 'POST',

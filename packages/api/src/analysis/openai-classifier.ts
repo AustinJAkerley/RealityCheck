@@ -13,7 +13,7 @@
  * falls back to the heuristic `analyzeImage` implementation.
  *
  * Responses API endpoint format:
- *   POST {AZURE_OPENAI_ENDPOINT}/v1/responses
+ *   POST {AZURE_OPENAI_ENDPOINT}/deployments/{deployment}/responses?api-version=2024-10-21
  * Authentication header: `Authorization: Bearer {key}` (APIM gateway format).
  */
 
@@ -21,6 +21,7 @@ export interface AzureOpenAIConfig {
   endpoint: string;
   apiKey: string;
   deployment: string;
+  apiVersion: string;
 }
 
 /**
@@ -37,6 +38,7 @@ export function getAzureOpenAIConfig(): AzureOpenAIConfig | null {
     endpoint,
     apiKey,
     deployment: process.env.AZURE_OPENAI_DEPLOYMENT?.trim() || 'gpt-5-1-chat',
+    apiVersion: process.env.AZURE_OPENAI_API_VERSION?.trim() || '2024-10-21',
   };
 }
 
@@ -78,7 +80,8 @@ export async function classifyImageWithAzureOpenAI(
       : 'Is this image AI-generated? Respond with JSON only.',
   });
 
-  const responsesUrl = `${config.endpoint.replace(/\/$/, '')}/v1/responses`;
+  const responsesUrl =
+    `${config.endpoint.replace(/\/$/, '')}/deployments/${config.deployment}/responses?api-version=${config.apiVersion}`;
 
   const response = await fetch(responsesUrl, {
     method: 'POST',

@@ -24,6 +24,7 @@ describe('getAzureOpenAIConfig', () => {
     delete process.env.AZURE_OPENAI_ENDPOINT;
     delete process.env.AZURE_OPENAI_API_KEY;
     delete process.env.AZURE_OPENAI_DEPLOYMENT;
+    delete process.env.AZURE_OPENAI_API_VERSION;
   });
 
   test('returns null when env vars are not set', () => {
@@ -48,14 +49,17 @@ describe('getAzureOpenAIConfig', () => {
     expect(config!.endpoint).toBe('https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai');
     expect(config!.apiKey).toBe('mykey');
     expect(config!.deployment).toBe('gpt-5-1-chat');
+    expect(config!.apiVersion).toBe('2024-10-21');
   });
 
-  test('uses custom deployment when set', () => {
+  test('uses custom deployment and api version when set', () => {
     process.env.AZURE_OPENAI_ENDPOINT = 'https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai';
     process.env.AZURE_OPENAI_API_KEY = 'mykey';
     process.env.AZURE_OPENAI_DEPLOYMENT = 'gpt-4-vision';
+    process.env.AZURE_OPENAI_API_VERSION = '2025-01-01';
     const config = getAzureOpenAIConfig();
     expect(config!.deployment).toBe('gpt-4-vision');
+    expect(config!.apiVersion).toBe('2025-01-01');
   });
 });
 
@@ -64,6 +68,7 @@ describe('classifyImageWithAzureOpenAI', () => {
     endpoint: 'https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai',
     apiKey: 'test-api-key',
     deployment: 'gpt-5-1-chat',
+    apiVersion: '2024-10-21',
   };
 
   afterEach(() => {
@@ -82,7 +87,7 @@ describe('classifyImageWithAzureOpenAI', () => {
     const [calledUrl, calledInit] = fetchSpy.mock.calls[0];
     expect(typeof calledUrl).toBe('string');
     expect((calledUrl as string)).toBe(
-      'https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai/v1/responses'
+      'https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai/deployments/gpt-5-1-chat/responses?api-version=2024-10-21'
     );
     const headers = (calledInit as RequestInit).headers as Record<string, string>;
     expect(headers['Authorization']).toBe('Bearer test-api-key');
@@ -189,7 +194,7 @@ describe('classifyImageWithAzureOpenAI', () => {
     await classifyImageWithAzureOpenAI(configWithTrailingSlash, TINY_PNG_DATA_URL, undefined);
     const calledUrl = fetchSpy.mock.calls[0][0] as string;
     expect(calledUrl).toBe(
-      'https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai/v1/responses'
+      'https://hackathon2026-apim-chffbmwwvr7u2.azure-api.net/openai/deployments/gpt-5-1-chat/responses?api-version=2024-10-21'
     );
   });
 });
