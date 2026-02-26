@@ -1,9 +1,10 @@
 /**
- * RealityCheck Firefox Popup Script
- * Uses WebExtensions `browser` API.
+ * RealityCheck Popup Script
+ * Loads settings, reflects them in the UI, and saves changes.
  */
 import { ExtensionSettings, DEFAULT_SETTINGS } from '@reality-check/core';
 
+// ── Element references ────────────────────────────────────────────────────────
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
 const globalEnabledEl = $<HTMLInputElement>('globalEnabled');
@@ -24,31 +25,39 @@ const pulseFreqValueEl = $<HTMLElement>('pulseFreqValue');
 const reportFPEl = $<HTMLButtonElement>('reportFP');
 const reportFNEl = $<HTMLButtonElement>('reportFN');
 const reportStatusEl = $<HTMLElement>('reportStatus');
+// Advanced fields
 const remoteEndpointEl = $<HTMLInputElement>('remoteEndpoint');
 const remoteApiKeyEl = $<HTMLInputElement>('remoteApiKey');
 const devModeEl = $<HTMLInputElement>('devMode');
 const devModeNoteEl = $<HTMLElement>('devModeNote');
-const textScanEnabledEl = $<HTMLInputElement>('textScanEnabled');
-const textScanNoteEl = $<HTMLElement>('textScanNote');
 
+// ── State ─────────────────────────────────────────────────────────────────────
 let settings: ExtensionSettings = DEFAULT_SETTINGS;
 let currentHost = '';
 
+// ── Load settings ─────────────────────────────────────────────────────────────
 async function loadSettings(): Promise<void> {
-  settings = (await browser.runtime.sendMessage({ type: 'GET_SETTINGS' })) as ExtensionSettings;
+  settings = await browser.runtime.sendMessage<{ type: string }, ExtensionSettings>({
+    type: 'GET_SETTINGS',
+  });
+
   const tabs = await browser.tabs.query({ active: true, currentWindow: true });
   currentHost = new URL(tabs[0]?.url ?? 'https://unknown').hostname;
   siteHostEl.textContent = currentHost;
+
   reflectSettings();
 }
 
 function reflectSettings(): void {
   globalEnabledEl.checked = settings.globalEnabled;
+
   const siteSetting = settings.siteSettings[currentHost];
   siteEnabledEl.checked = siteSetting !== undefined ? siteSetting.enabled : true;
+
   detectionQualityEl.value = settings.detectionQuality;
   remoteEnabledEl.checked = settings.remoteEnabled;
   updateRemoteNotes(settings.remoteEnabled);
+
   const wm = settings.watermark;
   watermarkModeEl.value = wm.mode;
   watermarkPositionEl.value = wm.position;
@@ -58,12 +67,12 @@ function reflectSettings(): void {
   animDurValueEl.textContent = String(wm.animationDuration);
   pulseFreqEl.value = String(wm.pulseFrequency);
   pulseFreqValueEl.textContent = String(wm.pulseFrequency);
+
+  // Advanced fields
   remoteEndpointEl.value = settings.remoteEndpoint ?? '';
   remoteApiKeyEl.value = settings.remoteApiKey ?? '';
   devModeEl.checked = settings.devMode ?? false;
   devModeNoteEl.classList.toggle('hidden', !settings.devMode);
-  textScanEnabledEl.checked = settings.textScanEnabled ?? false;
-  textScanNoteEl.classList.toggle('hidden', !settings.textScanEnabled);
 }
 
 function updateRemoteNotes(remoteEnabled: boolean): void {
@@ -71,10 +80,12 @@ function updateRemoteNotes(remoteEnabled: boolean): void {
   remoteOnNoteEl.classList.toggle('hidden', !remoteEnabled);
 }
 
+// ── Save helper ───────────────────────────────────────────────────────────────
 async function save(): Promise<void> {
   await browser.runtime.sendMessage({ type: 'SAVE_SETTINGS', payload: settings });
 }
 
+// ── Event listeners ───────────────────────────────────────────────────────────
 globalEnabledEl.addEventListener('change', async () => {
   settings = { ...settings, globalEnabled: globalEnabledEl.checked };
   await save();
@@ -83,13 +94,19 @@ globalEnabledEl.addEventListener('change', async () => {
 siteEnabledEl.addEventListener('change', async () => {
   settings = {
     ...settings,
-    siteSettings: { ...settings.siteSettings, [currentHost]: { enabled: siteEnabledEl.checked } },
+    siteSettings: {
+      ...settings.siteSettings,
+      [currentHost]: { enabled: siteEnabledEl.checked },
+    },
   };
   await save();
 });
 
 detectionQualityEl.addEventListener('change', async () => {
-  settings = { ...settings, detectionQuality: detectionQualityEl.value as ExtensionSettings['detectionQuality'] };
+  settings = {
+    ...settings,
+    detectionQuality: detectionQualityEl.value as ExtensionSettings['detectionQuality'],
+  };
   await save();
 });
 
@@ -100,30 +117,51 @@ remoteEnabledEl.addEventListener('change', async () => {
 });
 
 watermarkModeEl.addEventListener('change', async () => {
-  settings = { ...settings, watermark: { ...settings.watermark, mode: watermarkModeEl.value as ExtensionSettings['watermark']['mode'] } };
+  settings = {
+    ...settings,
+    watermark: { ...settings.watermark, mode: watermarkModeEl.value as ExtensionSettings['watermark']['mode'] },
+  };
   await save();
 });
 
 watermarkPositionEl.addEventListener('change', async () => {
-  settings = { ...settings, watermark: { ...settings.watermark, position: watermarkPositionEl.value as ExtensionSettings['watermark']['position'] } };
+  settings = {
+    ...settings,
+    watermark: { ...settings.watermark, position: watermarkPositionEl.value as ExtensionSettings['watermark']['position'] },
+  };
   await save();
 });
 
-watermarkOpacityEl.addEventListener('input', () => { opacityValueEl.textContent = watermarkOpacityEl.value; });
+watermarkOpacityEl.addEventListener('input', () => {
+  opacityValueEl.textContent = watermarkOpacityEl.value;
+});
 watermarkOpacityEl.addEventListener('change', async () => {
-  settings = { ...settings, watermark: { ...settings.watermark, opacity: Number(watermarkOpacityEl.value) } };
+  settings = {
+    ...settings,
+    watermark: { ...settings.watermark, opacity: Number(watermarkOpacityEl.value) },
+  };
   await save();
 });
 
-animDurationEl.addEventListener('input', () => { animDurValueEl.textContent = animDurationEl.value; });
+animDurationEl.addEventListener('input', () => {
+  animDurValueEl.textContent = animDurationEl.value;
+});
 animDurationEl.addEventListener('change', async () => {
-  settings = { ...settings, watermark: { ...settings.watermark, animationDuration: Number(animDurationEl.value) } };
+  settings = {
+    ...settings,
+    watermark: { ...settings.watermark, animationDuration: Number(animDurationEl.value) },
+  };
   await save();
 });
 
-pulseFreqEl.addEventListener('input', () => { pulseFreqValueEl.textContent = pulseFreqEl.value; });
+pulseFreqEl.addEventListener('input', () => {
+  pulseFreqValueEl.textContent = pulseFreqEl.value;
+});
 pulseFreqEl.addEventListener('change', async () => {
-  settings = { ...settings, watermark: { ...settings.watermark, pulseFrequency: Number(pulseFreqEl.value) } };
+  settings = {
+    ...settings,
+    watermark: { ...settings.watermark, pulseFrequency: Number(pulseFreqEl.value) },
+  };
   await save();
 });
 
@@ -149,11 +187,6 @@ devModeEl.addEventListener('change', async () => {
   devModeNoteEl.classList.toggle('hidden', !devModeEl.checked);
   await save();
 });
-textScanEnabledEl.addEventListener('change', async () => {
-  settings = { ...settings, textScanEnabled: textScanEnabledEl.checked };
-  textScanNoteEl.classList.toggle('hidden', !textScanEnabledEl.checked);
-  await save();
-});
 
 function showReportStatus(): void {
   reportStatusEl.classList.remove('hidden');
@@ -161,14 +194,21 @@ function showReportStatus(): void {
 }
 
 reportFPEl.addEventListener('click', () => {
-  browser.runtime.sendMessage({ type: 'REPORT_FALSE_POSITIVE', payload: { type: 'false_positive', url: `https://${currentHost}` } });
+  browser.runtime.sendMessage({
+    type: 'REPORT_FALSE_POSITIVE',
+    payload: { type: 'false_positive', url: `https://${currentHost}` },
+  });
   showReportStatus();
 });
 
 reportFNEl.addEventListener('click', () => {
-  browser.runtime.sendMessage({ type: 'REPORT_FALSE_POSITIVE', payload: { type: 'false_negative', url: `https://${currentHost}` } });
+  browser.runtime.sendMessage({
+    type: 'REPORT_FALSE_POSITIVE',
+    payload: { type: 'false_negative', url: `https://${currentHost}` },
+  });
   showReportStatus();
 });
 
+// ── Init ─────────────────────────────────────────────────────────────────────
 loadSettings().catch(console.error);
 

@@ -2,290 +2,158 @@
 
 ## Goal
 
-RealityCheck is a cross-browser extension that detects likely AI-generated content visible in the browser viewport (images, videos, text) and watermarks or labels it in-page so users are less likely to mistake synthetic media for real content.
+RealityCheck is a cross-browser extension that detects likely AI-generated images and videos visible in the browser viewport and watermarks or labels them in-page so users are less likely to mistake synthetic media for real content.
 
 > **Important**: Detection is _probabilistic_. All UI language is deliberately hedged ("likely", "confidence"). The extension will produce false positives and false negatives. It is a tool to raise awareness, not a definitive classifier.
+
+---
+
+## Detection Architecture (SDXL-only + optional remote escalation)
+
+All media classification uses **two ML classifiers only**:
+
+| Classifier | What | Where |
+|---|---|---|
+| **Local SDXL** | `Organika/sdxl-detector` via Transformers.js (ONNX/WASM) | Background service worker |
+| **Remote ML** | Azure OpenAI APIM endpoint (`/openai`) | Background service worker (bypasses CORS) |
+
+**Everything else has been removed**: no URL-pattern heuristics, no EXIF metadata analysis, no C2PA, no nonescape-mini colour histograms, no text heuristics, no audio URL matching.
+
+### Image Pipeline
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  content script (jsdom canvas)                          │
+│  1. Load img pixels via <canvas>                        │
+│  2. → SDXL_CLASSIFY (background SW) → local score      │
+│  3. if uncertain (0.25–0.75) AND remoteEnabled:         │
+│       → REMOTE_CLASSIFY (background SW) → remote score  │
+│       → final = 0.3 × local + 0.7 × remote             │
+│  4. isAIGenerated = final ≥ 0.40                        │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Video Pipeline
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  content script                                         │
+│  1. Capture 5 frames at evenly-spaced timestamps        │
+│  2. SDXL_CLASSIFY each frame → average score           │
+│  3. if uncertain (0.25–0.75) AND remoteEnabled:         │
+│       → REMOTE_CLASSIFY (best frame) → remote score     │
+│       → final = 0.3 × local + 0.7 × remote             │
+│  4. isAIGenerated = final ≥ 0.40                        │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Text Pipeline
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  content script (text elements not scanned by default)  │
+│  if remoteEnabled:                                      │
+│    → REMOTE_CLASSIFY (text slice) → remote score        │
+│  else: neutral 0 (not AI)                               │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Audio
+
+Audio detection is **not supported**. The detector always returns a neutral result.
 
 ---
 
 ## High-level architecture
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│  Browser (Chrome / Edge / Firefox)                             │
-│                                                                │
-│  ┌──────────────────────────────────┐    ┌──────────────────┐  │
-│  │  Background Service Worker       │◄──►│  Popup UI        │  │
-│  │  (ES module — "type": "module")  │    │  (settings,      │  │
-│  │                                  │    │   report)        │  │
-│  │  • Settings sync                 │    └──────────────────┘  │
-│  │  • SDXL_CLASSIFY handler         │                          │
-│  │    └─ createSdxlDetectorRunner() │                          │
-│  │       Organika/sdxl-detector     │                          │
-│  │       (Transformers.js + ONNX)   │                          │
-│  │  • REMOTE_CLASSIFY handler       │                          │
-│  │    └─ fetch → Azure API          │                          │
-│  └────────────┬─────────────────────┘                          │
-│               │ SETTINGS_UPDATED / SDXL_CLASSIFY / REMOTE_CLASSIFY │
-│               ▼                                                │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │  Content Script  (classic script — no import.meta)       │  │
-│  │  ┌──────────────────────────────────────────────────┐   │  │
-│  │  │  DetectionPipeline                               │   │  │
-│  │  │  ├── TextDetector  (local heuristics + remote)   │   │  │
-│  │  │  ├── ImageDetector (metadata + heuristics +      │   │  │
-│  │  │  │     nonescape-mini + SDXL proxy runner)       │   │  │
-│  │  │  └── VideoDetector (frame sample + remote)       │   │  │
-│  │  └──────────────────────────────────────────────────┘   │  │
-│  │  ┌──────────────────────────────────────────────────┐   │  │
-│  │  │  WatermarkOverlay (CSS animations, no JS timers) │   │  │
-│  │  └──────────────────────────────────────────────────┘   │  │
-│  └──────────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────┘
-           │ (on by default; user can disable in popup)
-           ▼
-  ┌─────────────────────────────────────────────────────────┐
-  │  @reality-check/api  (packages/api — Azure-hosted)      │
-  │                                                         │
-  │  POST /v1/classify                                      │
-  │  ├── Bearer-token authentication (CLASSIFY_API_KEY)     │
-  │  ├── CSRF protection (Origin + X-RealityCheck-Request)  │
-  │  ├── Rate limiting (60 req/min per IP)                  │
-  │  └── Image analysis (CDN patterns, dimensions, bytes)   │
-  │                                                         │
-  │  GET  /health  (Azure liveness probe)                   │
-  └─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│  Browser (Chrome / Edge / Safari / Firefox)                      │
+│                                                                  │
+│  ┌────────────────────────────────────┐    ┌──────────────────┐  │
+│  │  Background Service Worker         │◄──►│  Popup UI        │  │
+│  │  (ES module — "type": "module")    │    │  (settings,      │  │
+│  │                                    │    │   report)        │  │
+│  │  • Settings sync                   │    └──────────────────┘  │
+│  │  • SDXL_CLASSIFY handler           │                          │
+│  │    └─ createSdxlDetectorRunner()   │                          │
+│  │       Organika/sdxl-detector       │                          │
+│  │       (Transformers.js + ONNX/WASM)│                          │
+│  │  • REMOTE_CLASSIFY handler         │                          │
+│  │    └─ fetch → Azure APIM endpoint  │                          │
+│  └──────────────┬─────────────────────┘                          │
+│                 │ SETTINGS_UPDATED / SDXL_CLASSIFY / REMOTE_CLASSIFY │
+│                 ▼                                                │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │  Content Script  (classic script — no import.meta)         │  │
+│  │  ┌──────────────────────────────────────────────────────┐  │  │
+│  │  │  DetectionPipeline                                   │  │  │
+│  │  │  ├── ImageDetector  (SDXL proxy → remote escalation) │  │  │
+│  │  │  ├── VideoDetector  (SDXL on frames → remote)        │  │  │
+│  │  │  ├── TextDetector   (remote only)                    │  │  │
+│  │  │  └── AudioDetector  (neutral — not supported)        │  │  │
+│  │  └──────────────────────────────────────────────────────┘  │  │
+│  │  ┌──────────────────────────────────────────────────────┐  │  │
+│  │  │  WatermarkOverlay (CSS animations, no JS timers)     │  │  │
+│  │  └──────────────────────────────────────────────────────┘  │  │
+│  └────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────┘
+                    │ optional (remoteEnabled)
+                    ▼
+  ┌───────────────────────────────────────────────────────────┐
+  │  Azure OpenAI APIM Gateway                                │
+  │  POST /openai/...                                         │
+  │  ├── Bearer-token authentication (optional API key)       │
+  │  └── Vision-capable model — classifies image/text data    │
+  └───────────────────────────────────────────────────────────┘
 ```
 
 ### Why SDXL inference runs in the background service worker
 
-Chrome extension content scripts are always loaded as **classic scripts**, even
-when bundled as ESM.  `@huggingface/transformers` (Transformers.js) uses
-`import.meta.url` internally to locate ONNX Runtime WASM files — this throws a
-parse-time `SyntaxError: Cannot use 'import.meta' outside a module` in a
-classic-script context and breaks the entire content script.
+Content scripts are loaded as classic scripts (IIFE bundle format). The Transformers.js library uses `import.meta.url` to locate the WASM binary, which is only valid in ES module context. The background service worker is an ES module (`"type": "module"` in manifest), so Transformers.js and ONNX Runtime Web load correctly there.
 
-The background service worker is declared as `"type": "module"` in the
-manifest, so `import.meta.url` is valid there.  Content scripts therefore use a
-lightweight **proxy runner** (`createSdxlDetectorProxyRunner`) that sends the
-image pixel data to the background via the `SDXL_CLASSIFY` message, following
-the same pattern already used by `REMOTE_CLASSIFY`.
+The content script sends a `SDXL_CLASSIFY` message to the background worker, which runs inference and replies with the score.
 
-**Result:**
-
-| Bundle | Size | Notes |
-|--------|------|-------|
-| `content.js` | ~73 KB | Zero `import.meta` references; `@huggingface/transformers` fully tree-shaken out |
-| `background.js` | ~2.2 MB | Transformers.js + ONNX Runtime WASM live here; valid ES module context |
-
-### Where the model lives
-
-`Organika/sdxl-detector` is a Vision Transformer (ViT) fine-tuned to classify
-images as `"artificial"` (AI-generated) or `"real"` (photographic).
-
-* **Source**: `https://huggingface.co/Organika/sdxl-detector`
-* **Download**: ~90 MB ONNX weights, fetched from HuggingFace Hub on the
-  **first use** only.  The download is initiated by the background service
-  worker inside `buildLocalClassifier()` (see
-  `packages/core/src/adapters/sdxl-detector-adapter.ts`).
-* **Cache**: The browser's **Cache API** (same storage used by service workers)
-  retains the weights between browser sessions.  After the one-time download,
-  all inference runs **fully offline** — no per-image network call is made.
-* **Inference runtime**: ONNX Runtime Web (WebAssembly backend), loaded via
-  Transformers.js v3.  The pipeline is initialised lazily on the first
-  `SDXL_CLASSIFY` request and reused for all subsequent calls
-  (`cachedClassifierPromise` module singleton).
-* **Firefox**: Returns a neutral score of `0.5` for `SDXL_CLASSIFY` because
-  Firefox uses a Manifest V2 IIFE background page, which cannot run
-  WebAssembly in the same way.  Heuristic and remote classification remain
-  fully active on Firefox.
+**Firefox exception**: Firefox MV2 background pages use classic scripts; `import.meta.url` is unavailable, so `SDXL_CLASSIFY` returns a neutral `0.5`. When `remoteEnabled` is true, the remote classifier handles uncertain images in Firefox.
 
 ---
 
-## Backend API service — `/packages/api`
+## Settings
 
-The `@reality-check/api` package is a Node.js / Express service designed to be
-deployed to Azure App Service or Azure Container Apps.  It exposes the
-`POST /v1/classify` endpoint consumed by the browser extension's
-`GenericHttpAdapter` (see `packages/core/src/adapters/remote-adapter.ts`).
-
-### Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/v1/classify` | Classify an image (or other content type). Returns `{ score, label }`. |
-| `GET`  | `/health` | Liveness probe for Azure health checks. Returns `{ status: "ok" }`. |
-
-### Security layers
-
-1. **Helmet** — sets secure HTTP response headers (CSP, HSTS, etc.).
-2. **CORS** — only browser-extension origins and origins listed in `ALLOWED_ORIGINS` are permitted for browser-originated requests; server-to-server calls (no `Origin` header) are allowed.
-3. **Bearer-token authentication** — when the `CLASSIFY_API_KEY` environment variable is set, every request must supply `Authorization: Bearer <key>`.  When unset the check is skipped (development mode).
-4. **CSRF protection** — every request to `/v1/*` must include the `X-RealityCheck-Request: 1` header and (if an `Origin` header is present) must originate from a trusted origin.  This makes CSRF attacks impossible even without session cookies.
-5. **Rate limiting** — 60 requests per minute per IP (configurable).
-
-### Environment variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `3000` | TCP port the server listens on. |
-| `CLASSIFY_API_KEY` | _(unset)_ | Shared secret sent as `Authorization: Bearer <key>` by the extension. Set in production to prevent unauthorised access. |
-| `ALLOWED_ORIGINS` | _(unset)_ | Comma-separated list of trusted web origins (in addition to all browser-extension origins). |
-
----
-
-## Shared core library — `/packages/core`
-
-All browser wrappers import from `@reality-check/core`. The core is pure TypeScript with no browser-extension-specific APIs.
-
-### Modules
-
-| Module | Responsibility |
-|---|---|
-| `types.ts` | All shared TypeScript types and interfaces |
-| `detectors/text-detector.ts` | Local heuristic + remote text classification |
-| `detectors/image-detector.ts` | URL/dimension heuristics + ML model + remote image classification |
-| `detectors/video-detector.ts` | URL heuristics + frame sampling + remote |
-| `pipeline/detection-pipeline.ts` | Orchestrates detectors; pluggable via `registerDetector`; registers SDXL proxy runner |
-| `overlay/watermark-overlay.ts` | CSS-animated overlays for media and text |
-| `storage/settings-storage.ts` | Extension storage abstraction (chrome/browser/localStorage) |
-| `utils/cache.ts` | LRU-like in-memory result cache |
-| `utils/rate-limiter.ts` | Token-bucket rate limiter for remote calls |
-| `utils/hash.ts` | Lightweight djb2 hash for cache keys |
-| `adapters/remote-adapter.ts` | Pluggable remote provider (OpenAI, Generic HTTP) |
-| `adapters/sdxl-detector-adapter.ts` | Local ViT inference via Transformers.js (background) + proxy runner (content script) |
-| `adapters/nonescape-mini-adapter.ts` | Zero-config pixel-statistics heuristic; retained as fallback |
-
----
-
-## Detection pipeline
-
-### Text detection
-
-**Local heuristics (always run):**
-- **Burstiness**: AI-generated text tends to have unusually uniform sentence lengths (low standard deviation). Human text has more "burstiness" — mixing short and long sentences.
-- **Type-Token Ratio (TTR)**: Low lexical diversity can indicate AI output.
-- **Filler phrase matching**: Regex list of known AI output patterns ("As an AI language model…", "Certainly, here is…", etc.).
-- **Average sentence length**: Extremely long average sentence length is slightly suspicious.
-
-**Limitations**: These heuristics have significant false-positive rates for technical writing, academic text, or well-edited prose. They should not be used as definitive evidence.
-
-**References**:
-- Gehrmann et al., "GLTR: Statistical Detection and Visualization of Generated Text" (2019)
-- Tian & Cui, "Multiscale Positive-Unlabeled Detection of AI-Generated Texts" (2023)
-- Mitchell et al., "DetectGPT: Zero-Shot Machine-Generated Text Detection" (2023)
-- OpenAI AI Text Classifier (retired 2023) — documented limitations of text classifiers
-
-### Image detection
-
-**Local heuristics:**
-- **URL/CDN pattern matching**: Known AI image services (Midjourney, DALL-E, Stable Diffusion, etc.)
-- **Power-of-two dimensions**: AI image generators typically produce 512×512, 1024×1024, etc.
-- **Aspect ratio**: Standard AI output ratios (1:1, 4:3, 16:9)
-
-**Local ML model (Organika/sdxl-detector):**
-
-The primary local classifier is a Vision Transformer (ViT-B/16) fine-tuned on
-SDXL-generated versus real photographs. It runs via Transformers.js + ONNX
-Runtime Web (WebAssembly) in the background service worker — see the [Why SDXL
-inference runs in the background service worker](#why-sdxl-inference-runs-in-the-background-service-worker)
-section above for the technical rationale.
-
-- Model: `Organika/sdxl-detector` (HuggingFace Hub)
-- Weights: ~90 MB ONNX, downloaded once and cached in the browser's Cache API
-- Output: `"artificial"` score ∈ [0, 1] (calibrated away from hard binary edges)
-- Content scripts communicate with the background via `SDXL_CLASSIFY` messages
-- `nonescape-mini` pixel-statistics heuristic is retained as a lightweight fallback
-
-**Limitations**: ViT-based models are strong on images close to their training
-distribution (SDXL / Stable Diffusion) but may miss images from other generators
-(Midjourney, DALL-E 3). The remote classifier path handles out-of-distribution
-cases. Pixel-level CNN detectors (CNNDetect, UnivFD) may complement ViT
-approaches for broader coverage.
-
-**References**:
-- Wang et al., "CNN-generated images are surprisingly easy to spot… for now" (2020)
-- C2PA Content Credentials — https://c2pa.org (open standard for provenance metadata)
-- Sha et al., "DE-FAKE: Detection and Attribution of Fake Images" (2023)
-- Organika/sdxl-detector — https://huggingface.co/Organika/sdxl-detector
-
-### Video detection
-
-**Local heuristics:**
-- **URL pattern matching**: Known AI video platforms (RunwayML, Sora, Pika, etc.)
-
-**Frame-level analysis (remote mode):**
-- Periodic frame capture via HTML Canvas (one frame per detection cycle)
-- Blocked for cross-origin videos due to browser CORS/taint policies
-- Captured frame downscaled to 128×128 before sending
-
-**Limitations**: Frame-level deepfake detection is a hard, rapidly-evolving problem. Local-only mode has very low detection coverage for novel deepfakes. This is deliberately disclosed to users.
-
-**References**:
-- Rossler et al., "FaceForensics++: Learning to Detect Manipulated Facial Images" (2019)
-- Chai et al., "What Makes Fake Images Detectable?" (2020)
-- Dolhansky et al., "The DeepFake Detection Challenge Dataset" (2020)
-
----
-
-## Watermark overlay
-
-Watermarks are rendered as absolutely-positioned `<div>` elements layered over media/text elements.
-
-### Modes
-
-| Mode | Behaviour | CSS mechanism |
+| Setting | Default | Description |
 |---|---|---|
-| `static` | Always visible | `opacity: var(--rc-opacity)` |
-| `flash` | Appears briefly, then fades | `@keyframes rc-flash` |
-| `pulse` | Slow fade in/out loop | `@keyframes rc-pulse` |
-| `auto-hide` | Visible briefly, hidden on hover | CSS `transition` + JS class toggle |
-
-### Accessibility
-
-- All animations use CSS `@keyframes` rather than JS timers where possible.
-- `prefers-reduced-motion: reduce` disables all animations and forces static display.
-- Overlays use `pointer-events: none` so they never intercept user interaction.
-
-### Obstruction auto-fallback
-
-If the watermark would cover more than `obstructionThreshold` (default 50%) of the element area, the mode automatically falls back from `static` to `flash` to minimise obstruction.
+| `globalEnabled` | `true` | Master on/off switch |
+| `detectionQuality` | `'high'` | Downscale resolution: low=64px, medium=128px, high=512px |
+| `remoteEnabled` | `false` | Enable optional remote ML escalation (Azure APIM) |
+| `remoteEndpoint` | `''` | Custom endpoint URL (leave blank for default) |
+| `remoteApiKey` | `''` | API key for custom endpoints |
+| `devMode` | `true` | Show green watermark on every image/video (bypasses detection) |
 
 ---
 
-## Privacy model
+## Packages
 
-Remote classification is **enabled by default**. The extension calls our hosted Azure classifier (`https://api.realitycheck.ai/v1/classify`) for any image that passes the local photorealism pre-filter. No API key is required from the user — authentication to downstream AI services is handled server-side by the proxy. Users can turn remote classification off at any time in the popup.
-
-| Setting | Behaviour |
+| Package | Purpose |
 |---|---|
-| Remote classification ON (default) | Photorealistic images, inconclusive text, and video frames are sent to our hosted endpoint. Payloads are minimal: text snippet ≤ 2 000 chars, downscaled image thumbnail (128 × 128 px, JPEG). A notice is shown in the popup whenever remote mode is active. |
-| Remote classification OFF | No network calls. All analysis is on-device using local heuristics only. The popup suggests using Medium or High detection quality for best accuracy in this mode. |
-
-API keys are never required for the default endpoint. For custom/development endpoints, an optional API key can be configured in the **Advanced** section (collapsed by default) of the popup. Keys are stored exclusively in `chrome.storage.sync` / `browser.storage.sync` — never hardcoded or logged.
-
-### Photorealism pre-filter
-
-Before any content is analysed or sent off-device, every image passes through a canvas-based photorealism pre-filter. Non-photorealistic images (icons, cartoons, illustrations, text graphics) are **skipped entirely** — they generate no local heuristic result and are never sent to the remote endpoint. This keeps both processing cost and data transmission minimal.
-
-The pre-filter depth is controlled by the **Detection Quality** setting:
-
-| Tier | Analysis | Cost |
-|---|---|---|
-| Low | Colour histogram entropy + unique colour count (64 × 64 canvas) | ~0 ms |
-| Medium (default) | Low + block noise/texture variance + saturation distribution | < 1 ms |
-| High | Medium + bundled ML model (TF.js / ONNX, WebGL-accelerated) | 10–50 ms |
+| `packages/core` | Shared detection logic, adapters, watermark overlay |
+| `extensions/chrome` | Chrome MV3 extension |
+| `extensions/edge` | Edge MV3 extension |
+| `extensions/safari` | Safari MV3 extension |
+| `extensions/firefox` | Firefox MV2 extension |
 
 ---
 
-## Settings persistence
+## Removed classifiers
 
-Settings are stored in `chrome.storage.sync` (Chrome/Edge) or `browser.storage.sync` (Firefox) and synced across the user's devices. The background script broadcasts `SETTINGS_UPDATED` messages to all active content scripts when settings change.
+The following classifiers were **removed** to simplify the codebase and eliminate issues caused by conflicting signals:
 
----
+- **URL/CDN heuristic patterns** — false positives on image CDN URLs that happened to contain AI-adjacent terms
+- **Photorealism pre-filter** — colour histogram, unique-colour count, edge analysis
+- **EXIF metadata analysis** — AI software tag detection (too easy to spoof)
+- **C2PA content credentials** — dependency-heavy, unreliable on non-C2PA-aware platforms
+- **Nonescape-mini** — hand-tuned logistic regression on colour/texture features
+- **Text heuristics** — filler phrase detection, burstiness, type-token ratio
+- **Audio URL pattern matching** — unreliable based on domain name alone
+- **Temporal video analysis** — frame-diff variance, motion heuristics
 
-## Rate limiting & caching
-
-- **DetectionCache**: LRU-like in-memory cache keyed by content hash or URL. TTL: 5 minutes, max 200 entries.
-- **RateLimiter**: Token-bucket, 10 tokens per minute (text), 5 tokens per minute (video). Prevents flooding remote APIs.
-- Content is re-analysed when it scrolls back into the viewport only if the cache entry has expired.
+The only classifiers that remain are the **Organika/sdxl-detector** (local ONNX model) and the **Azure OpenAI APIM remote endpoint** (optional escalation).

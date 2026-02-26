@@ -1,10 +1,12 @@
 /**
- * RealityCheck Chrome Extension — Background Service Worker
+ * RealityCheck Edge Extension — Background Service Worker
  *
  * Responsibilities:
  * - Maintain extension settings in chrome.storage.sync
  * - Handle messages from content scripts and popup
  * - Broadcast settings changes to active content scripts
+ * - Run SDXL model inference (SDXL_CLASSIFY) — content scripts can't load WASM
+ * - Route remote ML calls (REMOTE_CLASSIFY) — bypasses CORS restrictions
  */
 
 import { SettingsStorage, DEFAULT_SETTINGS, ExtensionSettings, createRemoteAdapter, createSdxlDetectorRunner, MlModelRunner } from '@reality-check/core';
@@ -65,27 +67,6 @@ chrome.runtime.onMessage.addListener(
       return false;
     }
 
-    if (message.type === 'FETCH_IMAGE_BYTES') {
-      // Fetch image bytes on behalf of the content script.
-      // Background service workers are not subject to CORS restrictions,
-      // allowing EXIF and C2PA metadata to be read from cross-origin images.
-      const url = message.payload as string;
-      fetch(url)
-        .then(async (resp) => {
-          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-          const blob = await resp.blob();
-          return new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = () => reject(reader.error);
-            reader.readAsDataURL(blob);
-          });
-        })
-        .then((dataUrl) => sendResponse({ ok: true, dataUrl }))
-        .catch(() => sendResponse({ ok: false, dataUrl: null }));
-      return true; // async response
-    }
-
     if (message.type === 'SDXL_CLASSIFY') {
       // Run the Organika/sdxl-detector model in this ES module service worker.
       // Content scripts can't load WASM (import.meta.url fails in classic scripts).
@@ -103,6 +84,8 @@ chrome.runtime.onMessage.addListener(
     }
 
     if (message.type === 'REMOTE_CLASSIFY') {
+      // Background service workers are not subject to CORS restrictions,
+      // so the fetch to the Azure OpenAI APIM endpoint succeeds here.
       const { endpoint, apiKey, contentType, payload } = message.payload as {
         endpoint: string;
         apiKey: string;

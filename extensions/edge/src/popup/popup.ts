@@ -30,8 +30,6 @@ const remoteEndpointEl = $<HTMLInputElement>('remoteEndpoint');
 const remoteApiKeyEl = $<HTMLInputElement>('remoteApiKey');
 const devModeEl = $<HTMLInputElement>('devMode');
 const devModeNoteEl = $<HTMLElement>('devModeNote');
-const textScanEnabledEl = $<HTMLInputElement>('textScanEnabled');
-const textScanNoteEl = $<HTMLElement>('textScanNote');
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let settings: ExtensionSettings = DEFAULT_SETTINGS;
@@ -75,8 +73,6 @@ function reflectSettings(): void {
   remoteApiKeyEl.value = settings.remoteApiKey ?? '';
   devModeEl.checked = settings.devMode ?? false;
   devModeNoteEl.classList.toggle('hidden', !settings.devMode);
-  textScanEnabledEl.checked = settings.textScanEnabled ?? false;
-  textScanNoteEl.classList.toggle('hidden', !settings.textScanEnabled);
 }
 
 function updateRemoteNotes(remoteEnabled: boolean): void {
@@ -189,11 +185,6 @@ remoteApiKeyEl.addEventListener('input', () => {
 devModeEl.addEventListener('change', async () => {
   settings = { ...settings, devMode: devModeEl.checked };
   devModeNoteEl.classList.toggle('hidden', !devModeEl.checked);
-  await save();
-});
-textScanEnabledEl.addEventListener('change', async () => {
-  settings = { ...settings, textScanEnabled: textScanEnabledEl.checked };
-  textScanNoteEl.classList.toggle('hidden', !textScanEnabledEl.checked);
   await save();
 });
 

@@ -1,7 +1,6 @@
 /**
- * RealityCheck Safari Popup Script
+ * RealityCheck Popup Script
  * Loads settings, reflects them in the UI, and saves changes.
- * Uses the WebExtensions `browser` API (Promise-based).
  */
 import { ExtensionSettings, DEFAULT_SETTINGS } from '@reality-check/core';
 
@@ -31,8 +30,6 @@ const remoteEndpointEl = $<HTMLInputElement>('remoteEndpoint');
 const remoteApiKeyEl = $<HTMLInputElement>('remoteApiKey');
 const devModeEl = $<HTMLInputElement>('devMode');
 const devModeNoteEl = $<HTMLElement>('devModeNote');
-const textScanEnabledEl = $<HTMLInputElement>('textScanEnabled');
-const textScanNoteEl = $<HTMLElement>('textScanNote');
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let settings: ExtensionSettings = DEFAULT_SETTINGS;
@@ -40,7 +37,9 @@ let currentHost = '';
 
 // ── Load settings ─────────────────────────────────────────────────────────────
 async function loadSettings(): Promise<void> {
-  settings = (await browser.runtime.sendMessage({ type: 'GET_SETTINGS' })) as ExtensionSettings;
+  settings = await browser.runtime.sendMessage<{ type: string }, ExtensionSettings>({
+    type: 'GET_SETTINGS',
+  });
 
   const tabs = await browser.tabs.query({ active: true, currentWindow: true });
   currentHost = new URL(tabs[0]?.url ?? 'https://unknown').hostname;
@@ -74,8 +73,6 @@ function reflectSettings(): void {
   remoteApiKeyEl.value = settings.remoteApiKey ?? '';
   devModeEl.checked = settings.devMode ?? false;
   devModeNoteEl.classList.toggle('hidden', !settings.devMode);
-  textScanEnabledEl.checked = settings.textScanEnabled ?? false;
-  textScanNoteEl.classList.toggle('hidden', !settings.textScanEnabled);
 }
 
 function updateRemoteNotes(remoteEnabled: boolean): void {
@@ -168,7 +165,6 @@ pulseFreqEl.addEventListener('change', async () => {
   await save();
 });
 
-// Advanced
 // Advanced — use 'input' event (not 'change') for text fields so the value
 // is saved as the user types. The 'change' event only fires on blur, which
 // never happens when the popup is closed by clicking outside.
@@ -189,11 +185,6 @@ remoteApiKeyEl.addEventListener('input', () => {
 devModeEl.addEventListener('change', async () => {
   settings = { ...settings, devMode: devModeEl.checked };
   devModeNoteEl.classList.toggle('hidden', !devModeEl.checked);
-  await save();
-});
-textScanEnabledEl.addEventListener('change', async () => {
-  settings = { ...settings, textScanEnabled: textScanEnabledEl.checked };
-  textScanNoteEl.classList.toggle('hidden', !textScanEnabledEl.checked);
   await save();
 });
 
@@ -220,3 +211,4 @@ reportFNEl.addEventListener('click', () => {
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 loadSettings().catch(console.error);
+

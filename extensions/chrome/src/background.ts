@@ -5,6 +5,8 @@
  * - Maintain extension settings in chrome.storage.sync
  * - Handle messages from content scripts and popup
  * - Broadcast settings changes to active content scripts
+ * - Run SDXL model inference (SDXL_CLASSIFY) — content scripts can't load WASM
+ * - Route remote ML calls (REMOTE_CLASSIFY) — bypasses CORS restrictions
  */
 
 import { SettingsStorage, DEFAULT_SETTINGS, ExtensionSettings, createRemoteAdapter, createSdxlDetectorRunner, MlModelRunner } from '@reality-check/core';
@@ -63,27 +65,6 @@ chrome.runtime.onMessage.addListener(
       console.log('[RealityCheck] False positive reported:', message.payload);
       sendResponse({ ok: true });
       return false;
-    }
-
-    if (message.type === 'FETCH_IMAGE_BYTES') {
-      // Fetch image bytes on behalf of the content script.
-      // Background service workers are not subject to CORS restrictions,
-      // allowing EXIF and C2PA metadata to be read from cross-origin images.
-      const url = message.payload as string;
-      fetch(url)
-        .then(async (resp) => {
-          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-          const blob = await resp.blob();
-          return new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = () => reject(reader.error);
-            reader.readAsDataURL(blob);
-          });
-        })
-        .then((dataUrl) => sendResponse({ ok: true, dataUrl }))
-        .catch(() => sendResponse({ ok: false, dataUrl: null }));
-      return true; // async response
     }
 
     if (message.type === 'SDXL_CLASSIFY') {

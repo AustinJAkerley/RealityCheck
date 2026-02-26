@@ -4,6 +4,11 @@
  * Uses WebExtensions `browser` API (Promise-based).
  * Functionally equivalent to the Chrome service worker but using
  * browser.* APIs for MV2 compatibility.
+ *
+ * Note: Firefox MV2 background pages use classic scripts (IIFE format).
+ * Transformers.js requires import.meta.url (ES module context), so
+ * SDXL_CLASSIFY returns a neutral 0.5 score; the remote classifier is
+ * still fully functional.
  */
 
 import { SettingsStorage, DEFAULT_SETTINGS, ExtensionSettings, createRemoteAdapter } from '@reality-check/core';
@@ -43,30 +48,10 @@ browser.runtime.onMessage.addListener(
       return Promise.resolve({ ok: true });
     }
 
-    if (message.type === 'FETCH_IMAGE_BYTES') {
-      // Fetch image bytes on behalf of the content script.
-      // Background scripts are not subject to CORS restrictions,
-      // allowing EXIF and C2PA metadata to be read from cross-origin images.
-      const url = message.payload as string;
-      return fetch(url)
-        .then(async (resp) => {
-          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-          const blob = await resp.blob();
-          return new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = () => reject(reader.error);
-            reader.readAsDataURL(blob);
-          });
-        })
-        .then((dataUrl) => ({ ok: true, dataUrl }))
-        .catch(() => ({ ok: false, dataUrl: null }));
-    }
-
     if (message.type === 'SDXL_CLASSIFY') {
-      // Transformers.js requires ES module context (import.meta.url). Firefox MV2
-      // background pages use classic scripts (IIFE format), so WASM can't run here.
-      // Return a neutral score — heuristics and remote classification remain active.
+      // Firefox MV2 background pages use classic scripts (IIFE format).
+      // Transformers.js requires import.meta.url, so WASM can't run here.
+      // Return a neutral score; the remote classifier handles escalation.
       return Promise.resolve({ ok: true, score: 0.5 });
     }
 
