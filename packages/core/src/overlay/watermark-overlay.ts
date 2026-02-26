@@ -124,6 +124,11 @@ function injectStyles(): void {
 const _positionUpdaters = new Set<() => void>();
 let _trackingListenerAttached = false;
 
+// One overlay per media element — prevents duplicate watermarks when the same
+// element is processed more than once (e.g. by concurrent observer + scanner).
+interface OverlayEntry { container: HTMLDivElement; updatePosition: () => void; }
+const _activeOverlays = new WeakMap<HTMLImageElement | HTMLVideoElement, OverlayEntry>();
+
 function _attachTrackingListeners(): void {
   if (_trackingListenerAttached) return;
   const update = (): void => { _positionUpdaters.forEach((fn) => fn()); };
@@ -205,6 +210,14 @@ export function applyMediaWatermark(
   details?: string,
   detectionId?: string
 ): WatermarkHandle {
+  // Remove any pre-existing overlay on this element to prevent duplicates.
+  const existing = _activeOverlays.get(media);
+  if (existing) {
+    existing.container.remove();
+    _positionUpdaters.delete(existing.updatePosition);
+    _activeOverlays.delete(media);
+  }
+
   injectStyles();
   _attachTrackingListeners();
 
@@ -252,6 +265,7 @@ export function applyMediaWatermark(
     if (!media.isConnected) {
       container.remove();
       _positionUpdaters.delete(updatePosition);
+      if (_activeOverlays.get(media)?.container === container) _activeOverlays.delete(media);
       return;
     }
 
@@ -283,6 +297,7 @@ export function applyMediaWatermark(
 
   updatePosition();
   _positionUpdaters.add(updatePosition);
+  _activeOverlays.set(media, { container, updatePosition });
 
   if (config.mode === 'auto-hide') {
     setTimeout(() => label.classList.add('rc-hidden'), config.animationDuration);
@@ -295,10 +310,12 @@ export function applyMediaWatermark(
     remove() {
       container.remove();
       _positionUpdaters.delete(updatePosition);
+      if (_activeOverlays.get(media)?.container === container) _activeOverlays.delete(media);
     },
     update(newConfig: WatermarkConfig) {
       container.remove();
       _positionUpdaters.delete(updatePosition);
+      if (_activeOverlays.get(media)?.container === container) _activeOverlays.delete(media);
       applyMediaWatermark(media, confidence, newConfig, decisionStage, details, detectionId);
     },
   };
@@ -318,6 +335,14 @@ export function applyNotAIWatermark(
   details?: string,
   detectionId?: string
 ): WatermarkHandle {
+  // Remove any pre-existing overlay on this element to prevent duplicates.
+  const existing = _activeOverlays.get(media);
+  if (existing) {
+    existing.container.remove();
+    _positionUpdaters.delete(existing.updatePosition);
+    _activeOverlays.delete(media);
+  }
+
   injectStyles();
   _attachTrackingListeners();
 
@@ -367,6 +392,7 @@ export function applyNotAIWatermark(
     if (!media.isConnected) {
       container.remove();
       _positionUpdaters.delete(updatePosition);
+      if (_activeOverlays.get(media)?.container === container) _activeOverlays.delete(media);
       return;
     }
 
@@ -388,15 +414,18 @@ export function applyNotAIWatermark(
 
   updatePosition();
   _positionUpdaters.add(updatePosition);
+  _activeOverlays.set(media, { container, updatePosition });
 
   return {
     remove() {
       container.remove();
       _positionUpdaters.delete(updatePosition);
+      if (_activeOverlays.get(media)?.container === container) _activeOverlays.delete(media);
     },
     update(newConfig: WatermarkConfig) {
       container.remove();
       _positionUpdaters.delete(updatePosition);
+      if (_activeOverlays.get(media)?.container === container) _activeOverlays.delete(media);
       applyNotAIWatermark(media, newConfig, decisionStage, details, detectionId);
     },
   };
