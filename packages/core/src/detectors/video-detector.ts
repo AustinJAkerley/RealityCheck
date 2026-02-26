@@ -456,13 +456,14 @@ export class VideoDetector implements Detector {
       const rl = this.rateLimiters[quality];
       if (rl.consume()) {
         try {
-          // Prefer frames from multi-frame analysis; fall back to a fresh single-frame
-          // capture only when multi-frame analysis returned no frames (e.g. video not
-          // yet loaded, zero dimensions). Both paths can return null on cross-origin.
-          const frameDataUrl =
+          // Capture quality-based frames at 0.25s intervals for remote classification.
+          const remoteFrames = await captureFramesForRemote(video, REMOTE_FRAME_COUNTS[quality]);
+          // Fall back to a single frame when captureFramesForRemote returned nothing
+          // (e.g. video not yet loaded, zero dimensions, cross-origin).
+          const fallbackFrame =
             capturedFrames.length > 0 ? capturedFrames[0] : captureVideoFrame(video, getDownscaleMaxDim(quality));
-          if (frameDataUrl) {
-            const imageHash = hashDataUrl(frameDataUrl);
+          if (remoteFrames.length > 0 || fallbackFrame) {
+            const imageHash = hashDataUrl(remoteFrames[0] ?? fallbackFrame ?? '');
             const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
             const apiKey = options.remoteApiKey || '';
             const payload: RemotePayload = {
