@@ -53,16 +53,37 @@ let cachedClassifierPromise: Promise<Classifier> | null = null;
  * Concurrency: the promise is assigned synchronously before any async work
  * begins, so all concurrent callers receive the same promise and the pipeline
  * is only built once.
+ *
+ * On failure the promise is cleared so the next call retries rather than
+ * immediately re-throwing the same cached rejection.
  */
 async function buildLocalClassifier(modelId: string): Promise<Classifier> {
   if (!cachedClassifierPromise) {
     cachedClassifierPromise = (async () => {
-      const { pipeline } = await import('@huggingface/transformers');
+      const { pipeline, env } = await import('@huggingface/transformers');
+
+      // Chrome extension service workers do not have SharedArrayBuffer, so
+      // ONNX Runtime's default multi-threaded WASM mode fails.  Force single-
+      // threaded mode before the pipeline is created.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const onnxEnv = (env.backends as any)?.onnx;
+      if (onnxEnv) {
+        onnxEnv.wasm ??= {};
+        onnxEnv.wasm.numThreads = 1;
+      }
+
+      console.log('[RealityCheck] Loading SDXL model:', modelId);
       // The Transformers.js pipeline() overload for 'image-classification' returns
       // ImageClassificationPipeline, which is callable but typed as a complex union.
       // We cast to our simpler Classifier alias that captures the runtime contract.
-      return pipeline('image-classification', modelId) as unknown as Classifier;
-    })();
+      const p = await (pipeline('image-classification', modelId) as unknown as Promise<Classifier>);
+      console.log('[RealityCheck] SDXL model loaded successfully');
+      return p;
+    })().catch((err: unknown) => {
+      console.error('[RealityCheck] Failed to load SDXL model:', err instanceof Error ? err.message : err);
+      cachedClassifierPromise = null; // allow retry on next call
+      throw err;
+    });
   }
   return cachedClassifierPromise;
 }
@@ -101,7 +122,8 @@ export function createSdxlDetectorRunner(options: SdxlDetectorOptions = {}): MlM
           : null;
         const score = artificial ? Math.max(0, Math.min(1, artificial.score)) : 0.5;
         return classifyFromScore(score);
-      } catch {
+      } catch (err) {
+        console.error('[RealityCheck] SDXL inference error:', err instanceof Error ? err.message : err);
         return 0.5;
       }
     },
@@ -143,7 +165,8 @@ export function createSdxlDetectorProxyRunner(): MlModelRunner {
           payload: { data, width, height },
         })) as { ok: boolean; score: number } | undefined;
         return response?.ok && typeof response.score === 'number' ? response.score : 0.5;
-      } catch {
+      } catch (err) {
+        console.error('[RealityCheck] SDXL_CLASSIFY proxy error:', err instanceof Error ? err.message : err);
         return 0.5;
       }
     },

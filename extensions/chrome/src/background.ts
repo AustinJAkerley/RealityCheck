@@ -78,8 +78,14 @@ chrome.runtime.onMessage.addListener(
       sdxlRunner ??= createSdxlDetectorRunner();
       sdxlRunner
         .run(data, width, height)
-        .then((score) => sendResponse({ ok: true, score }))
-        .catch(() => sendResponse({ ok: true, score: 0.5 }));
+        .then((score) => {
+          console.log('[RealityCheck] SDXL_CLASSIFY score:', score);
+          sendResponse({ ok: true, score });
+        })
+        .catch((err: unknown) => {
+          console.error('[RealityCheck] SDXL_CLASSIFY error:', err instanceof Error ? err.message : err);
+          sendResponse({ ok: true, score: 0.5 });
+        });
       return true; // async response
     }
 
