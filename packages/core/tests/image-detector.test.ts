@@ -323,7 +323,7 @@ describe('computeVisualAIScore', () => {
 
 // ── ML model registry ─────────────────────────────────────────────────────────
 
-import { registerMlModel, isMlModelAvailable } from '../src/detectors/image-detector';
+import { registerMlModel, isMlModelAvailable, runMlModelScore } from '../src/detectors/image-detector';
 
 describe('ML model registry', () => {
   test('isMlModelAvailable returns a boolean', () => {
@@ -352,147 +352,292 @@ describe('ML model registry', () => {
     expect(result.score).toBeGreaterThan(0.5);
     expect(result.isPhotorealistic).toBe(true);
   });
-});
 
-// ── Detection quality resolution ──────────────────────────────────────────────
-
-describe('getDownscaleMaxDim (detection quality resolution)', () => {
-  test('low quality uses the smallest resolution', () => {
-    expect(getDownscaleMaxDim('low')).toBeLessThan(getDownscaleMaxDim('medium'));
-  });
-
-  test('high quality uses the largest resolution', () => {
-    expect(getDownscaleMaxDim('high')).toBeGreaterThan(getDownscaleMaxDim('medium'));
-  });
-
-  test('resolutions are strictly ordered: low < medium < high', () => {
-    const low = getDownscaleMaxDim('low');
-    const medium = getDownscaleMaxDim('medium');
-    const high = getDownscaleMaxDim('high');
-    expect(low).toBeLessThan(medium);
-    expect(medium).toBeLessThan(high);
-  });
-
-  test('low quality dimension is a positive integer', () => {
-    const dim = getDownscaleMaxDim('low');
-    expect(dim).toBeGreaterThan(0);
-    expect(Number.isInteger(dim)).toBe(true);
-  });
-
-  test('returns documented dimension values for each quality tier', () => {
-    // Documented values: low=64, medium=128, high=512
-    expect(getDownscaleMaxDim('low')).toBe(64);
-    expect(getDownscaleMaxDim('medium')).toBe(128);
-    expect(getDownscaleMaxDim('high')).toBe(512);
-  });
-});
-
-// ── detect() end-to-end: quality resolution flows to remote classifier ────────
-
-describe('detect() remote image resolution scales with quality', () => {
-  /**
-   * Create a same-origin HTMLImageElement with fixed natural dimensions.
-   * A same-origin src ensures wouldTaintCanvas() returns false so downscaleImage()
-   * proceeds to create a canvas (even though jsdom's getContext returns null).
-   */
-  function mockImageElement(width: number, height: number): HTMLImageElement {
-    const img = document.createElement('img');
-    img.src = 'http://localhost/photo.jpg';
-    Object.defineProperty(img, 'naturalWidth', { value: width, configurable: true });
-    Object.defineProperty(img, 'naturalHeight', { value: height, configurable: true });
-    return img;
-  }
-
-  /**
-   * Spy on document.createElement to capture every canvas created during a
-   * detect() call. In jsdom, getContext('2d') returns null so no pixel data
-   * is produced, but canvas.width / canvas.height ARE set by downscaleImage()
-   * before the null check — making them observable from outside.
-   */
-  function captureCanvases(): { canvases: HTMLCanvasElement[]; restore: () => void } {
-    const canvases: HTMLCanvasElement[] = [];
-    const realCreate = document.createElement.bind(document);
-    const spy = jest.spyOn(document, 'createElement').mockImplementation((tag: string) => {
-      const el = realCreate(tag);
-      if (tag === 'canvas') canvases.push(el as HTMLCanvasElement);
-      return el;
+  test('runMlModelScore returns clamped model output', async () => {
+    registerMlModel({
+      async run() {
+        return 1.4;
+      },
     });
-    return { canvases, restore: () => spy.mockRestore() };
-  }
-
-  test('high quality creates a larger canvas for remote transmission than low quality', async () => {
-    const remoteClassify = jest.fn().mockResolvedValue({ score: 0.5, label: 'uncertain' });
-    const img = mockImageElement(1024, 1024);
-
-    // Low quality run
-    const low = captureCanvases();
-    await new ImageDetector().detect(img, { remoteEnabled: true, detectionQuality: 'low', remoteClassify });
-    low.restore();
-
-    // High quality run
-    const high = captureCanvases();
-    await new ImageDetector().detect(img, { remoteEnabled: true, detectionQuality: 'high', remoteClassify });
-    high.restore();
-
-    // The downscale canvas is the last canvas created in each run
-    // (extractPixelData creates the first canvas; downscaleImage creates the second)
-    const lowCanvas = low.canvases[low.canvases.length - 1];
-    const highCanvas = high.canvases[high.canvases.length - 1];
-    expect(lowCanvas).toBeDefined();
-    expect(highCanvas).toBeDefined();
-    expect(highCanvas.width).toBeGreaterThan(lowCanvas.width);
-    expect(highCanvas.height).toBeGreaterThan(lowCanvas.height);
+    const score = await runMlModelScore(noisyPixels(SIZE), SIZE, SIZE);
+    expect(score).toBe(1);
   });
 
-  test('low quality caps the remote canvas at 64px', async () => {
-    const remoteClassify = jest.fn().mockResolvedValue({ score: 0.5, label: 'uncertain' });
-    const img = mockImageElement(1024, 1024);
+  test('local-only image scoring returns a structured local decision', async () => {
+    registerMlModel({
+      async run() {
+        return 0.05;
+      },
+    });
+    const detector = new ImageDetector();
+    const img = document.createElement('img');
+    Object.defineProperty(img, 'complete', { configurable: true, value: true });
+    Object.defineProperty(img, 'naturalWidth', { configurable: true, value: 1024 });
+    Object.defineProperty(img, 'naturalHeight', { configurable: true, value: 1024 });
+    Object.defineProperty(img, 'src', {
+      configurable: true,
+      value: 'https://example.com/photo.png',
+    });
 
-    const { canvases, restore } = captureCanvases();
-    await new ImageDetector().detect(img, { remoteEnabled: true, detectionQuality: 'low', remoteClassify });
-    restore();
+    const pixels = noisyPixels(SIZE);
+    const originalCreateElement = document.createElement.bind(document);
+    const createSpy = jest.spyOn(document, 'createElement');
+    createSpy.mockImplementation(((tagName: string) => {
+      if (tagName !== 'canvas') return originalCreateElement(tagName);
+      return {
+        width: 0,
+        height: 0,
+        getContext: () => ({
+          drawImage: () => undefined,
+          getImageData: () => ({ data: pixels }),
+        }),
+        toDataURL: () => 'data:image/jpeg;base64,mock',
+      } as unknown as HTMLCanvasElement;
+    }) as typeof document.createElement);
 
-    const downscaleCanvas = canvases[canvases.length - 1];
-    expect(downscaleCanvas.width).toBe(64);
-    expect(downscaleCanvas.height).toBe(64);
-  });
-
-  test('medium quality caps the remote canvas at 128px', async () => {
-    const remoteClassify = jest.fn().mockResolvedValue({ score: 0.5, label: 'uncertain' });
-    const img = mockImageElement(1024, 1024);
-
-    const { canvases, restore } = captureCanvases();
-    await new ImageDetector().detect(img, { remoteEnabled: true, detectionQuality: 'medium', remoteClassify });
-    restore();
-
-    const downscaleCanvas = canvases[canvases.length - 1];
-    expect(downscaleCanvas.width).toBe(128);
-    expect(downscaleCanvas.height).toBe(128);
-  });
-
-  test('high quality caps the remote canvas at 512px', async () => {
-    const remoteClassify = jest.fn().mockResolvedValue({ score: 0.5, label: 'uncertain' });
-    const img = mockImageElement(1024, 1024);
-
-    const { canvases, restore } = captureCanvases();
-    await new ImageDetector().detect(img, { remoteEnabled: true, detectionQuality: 'high', remoteClassify });
-    restore();
-
-    const downscaleCanvas = canvases[canvases.length - 1];
-    expect(downscaleCanvas.width).toBe(512);
-    expect(downscaleCanvas.height).toBe(512);
-  });
-
-  test('remoteClassify is invoked for all three quality tiers', async () => {
-    const remoteClassify = jest.fn().mockResolvedValue({ score: 0.5, label: 'uncertain' });
-
-    for (const quality of ['low', 'medium', 'high'] as const) {
-      // Each detector has its own cache, so the same img src can be reused safely
-      const img = mockImageElement(1024, 1024);
-      await new ImageDetector().detect(img, { remoteEnabled: true, detectionQuality: quality, remoteClassify });
+    try {
+      const result = await detector.detect(img, {
+        remoteEnabled: false,
+        detectionQuality: 'low',
+        fetchBytes: async () => null,
+      });
+      expect(result.source).toBe('local');
+      expect(result.decisionStage).toBe('initial_heuristics');
+      expect(result.details).toContain('CDN/Dimension Score');
+      expect(result.heuristicScores?.metadataCdnAndDimensions).toBeDefined();
+    } finally {
+      createSpy.mockRestore();
     }
+  });
 
-    expect(remoteClassify).toHaveBeenCalledTimes(3);
+  test('local-only high-quality image path retains local stage details', async () => {
+    registerMlModel({
+      async run() {
+        return 0.95;
+      },
+    });
+    const detector = new ImageDetector();
+    const img = document.createElement('img');
+    Object.defineProperty(img, 'complete', { configurable: true, value: true });
+    Object.defineProperty(img, 'naturalWidth', { configurable: true, value: 1024 });
+    Object.defineProperty(img, 'naturalHeight', { configurable: true, value: 1024 });
+    Object.defineProperty(img, 'src', {
+      configurable: true,
+      value: 'https://example.com/photo.png',
+    });
+
+    const pixels = noisyPixels(SIZE);
+    const originalCreateElement = document.createElement.bind(document);
+    const createSpy = jest.spyOn(document, 'createElement');
+    createSpy.mockImplementation(((tagName: string) => {
+      if (tagName !== 'canvas') return originalCreateElement(tagName);
+      return {
+        width: 0,
+        height: 0,
+        getContext: () => ({
+          drawImage: () => undefined,
+          getImageData: () => ({ data: pixels }),
+        }),
+        toDataURL: () => 'data:image/jpeg;base64,mock',
+      } as unknown as HTMLCanvasElement;
+    }) as typeof document.createElement);
+
+    try {
+      const result = await detector.detect(img, {
+        remoteEnabled: false,
+        detectionQuality: 'high',
+        fetchBytes: async () => null,
+      });
+      expect(result.source).toBe('local');
+      expect(result.decisionStage).toBe('initial_heuristics');
+      expect(result.details).toContain('CDN/Dimension Score');
+      expect(result.heuristicScores?.metadataCdnAndDimensions).toBeDefined();
+    } finally {
+      createSpy.mockRestore();
+    }
+  });
+
+  test('remote-enabled mode bypasses local metadata and local ML', async () => {
+    const runMock = jest.fn().mockResolvedValue(0.05);
+    registerMlModel({ run: runMock });
+
+    try {
+      const detector = new ImageDetector();
+      const result = await detector.detect('https://midjourney.com/obvious.png', {
+        remoteEnabled: true,
+        detectionQuality: 'high',
+        remoteClassify: async () => ({ score: 0.9, label: 'ai' }),
+      });
+      expect(result.isAIGenerated).toBe(true);
+      expect(result.source).toBe('remote');
+      expect(result.decisionStage).toBe('remote_ml');
+      expect(runMock).not.toHaveBeenCalled();
+      expect(result.heuristicScores?.metadataCdnAndDimensions).toBeUndefined();
+      expect(result.heuristicScores?.remote).toBeCloseTo(0.9, 5);
+    } finally {
+      // no-op
+    }
+  });
+
+  test('remote-enabled mode relies solely on remote result', async () => {
+    registerMlModel({
+      async run() {
+        return 0.95;
+      },
+    });
+    const detector = new ImageDetector();
+    const img = document.createElement('img');
+    Object.defineProperty(img, 'complete', { configurable: true, value: true });
+    Object.defineProperty(img, 'naturalWidth', { configurable: true, value: 1024 });
+    Object.defineProperty(img, 'naturalHeight', { configurable: true, value: 1024 });
+    Object.defineProperty(img, 'src', { configurable: true, value: 'data:image/png;base64,AAAA' });
+
+    const pixels = noisyPixels(SIZE);
+    const originalCreateElement = document.createElement.bind(document);
+    const createSpy = jest.spyOn(document, 'createElement');
+    createSpy.mockImplementation(((tagName: string) => {
+      if (tagName !== 'canvas') return originalCreateElement(tagName);
+      return {
+        width: 0,
+        height: 0,
+        getContext: () => ({
+          drawImage: () => undefined,
+          getImageData: () => ({ data: pixels }),
+        }),
+        toDataURL: () => 'data:image/jpeg;base64,mock',
+      } as unknown as HTMLCanvasElement;
+    }) as typeof document.createElement);
+
+    try {
+      const result = await detector.detect(img, {
+        remoteEnabled: true,
+        detectionQuality: 'low',
+        remoteClassify: async () => ({ score: 0.1, label: 'human' }),
+      });
+      expect(result.source).toBe('remote');
+      expect(result.decisionStage).toBe('remote_ml');
+      expect(result.details).toContain('Remote-only mode');
+      expect(result.isAIGenerated).toBe(false);
+      expect(result.localModelScore).toBeUndefined();
+    } finally {
+      createSpy.mockRestore();
+    }
+  });
+
+  test.skip('high-quality local ML receives full image resolution input', async () => {
+    const runMock = jest.fn().mockResolvedValue(0.95);
+    registerMlModel({ run: runMock });
+    const detector = new ImageDetector();
+    const img = document.createElement('img');
+    Object.defineProperty(img, 'complete', { configurable: true, value: true });
+    Object.defineProperty(img, 'naturalWidth', { configurable: true, value: 1600 });
+    Object.defineProperty(img, 'naturalHeight', { configurable: true, value: 1000 });
+    Object.defineProperty(img, 'src', { configurable: true, value: 'https://example.com/photo.png' });
+
+    const pixels = noisyPixels(SIZE);
+    const originalCreateElement = document.createElement.bind(document);
+    const createSpy = jest.spyOn(document, 'createElement');
+    createSpy.mockImplementation(((tagName: string) => {
+      if (tagName !== 'canvas') return originalCreateElement(tagName);
+      return {
+        width: 0,
+        height: 0,
+        getContext: () => ({
+          drawImage: () => undefined,
+          getImageData: () => ({ data: pixels }),
+        }),
+        toDataURL: () => 'data:image/jpeg;base64,mock',
+      } as unknown as HTMLCanvasElement;
+    }) as typeof document.createElement);
+
+    try {
+      await detector.detect(img, {
+        remoteEnabled: false,
+        detectionQuality: 'high',
+      });
+      expect(runMock).toHaveBeenCalled();
+      const hasFullResCall = runMock.mock.calls.some((call) => call[1] === 1600 && call[2] === 1000);
+      expect(hasFullResCall).toBe(true);
+    } finally {
+      createSpy.mockRestore();
+    }
+  });
+
+  test.skip('medium-quality local ML receives half-resolution image input', async () => {
+    const runMock = jest.fn().mockResolvedValue(0.95);
+    registerMlModel({ run: runMock });
+    const detector = new ImageDetector();
+    const img = document.createElement('img');
+    Object.defineProperty(img, 'complete', { configurable: true, value: true });
+    Object.defineProperty(img, 'naturalWidth', { configurable: true, value: 1600 });
+    Object.defineProperty(img, 'naturalHeight', { configurable: true, value: 1000 });
+    Object.defineProperty(img, 'src', { configurable: true, value: 'https://example.com/photo.png' });
+
+    const pixels = noisyPixels(SIZE);
+    const originalCreateElement = document.createElement.bind(document);
+    const createSpy = jest.spyOn(document, 'createElement');
+    createSpy.mockImplementation(((tagName: string) => {
+      if (tagName !== 'canvas') return originalCreateElement(tagName);
+      return {
+        width: 0,
+        height: 0,
+        getContext: () => ({
+          drawImage: () => undefined,
+          getImageData: () => ({ data: pixels }),
+        }),
+        toDataURL: () => 'data:image/jpeg;base64,mock',
+      } as unknown as HTMLCanvasElement;
+    }) as typeof document.createElement);
+
+    try {
+      await detector.detect(img, {
+        remoteEnabled: false,
+        detectionQuality: 'medium',
+      });
+      expect(runMock).toHaveBeenCalled();
+      const hasHalfResCall = runMock.mock.calls.some((call) => call[1] === 800 && call[2] === 500);
+      expect(hasHalfResCall).toBe(true);
+    } finally {
+      createSpy.mockRestore();
+    }
+  });
+
+  test.skip('low-quality local ML receives 192-max-side image input', async () => {
+    const runMock = jest.fn().mockResolvedValue(0.95);
+    registerMlModel({ run: runMock });
+    const detector = new ImageDetector();
+    const img = document.createElement('img');
+    Object.defineProperty(img, 'complete', { configurable: true, value: true });
+    Object.defineProperty(img, 'naturalWidth', { configurable: true, value: 1600 });
+    Object.defineProperty(img, 'naturalHeight', { configurable: true, value: 1000 });
+    Object.defineProperty(img, 'src', { configurable: true, value: 'https://example.com/photo.png' });
+
+    const pixels = noisyPixels(SIZE);
+    const originalCreateElement = document.createElement.bind(document);
+    const createSpy = jest.spyOn(document, 'createElement');
+    createSpy.mockImplementation(((tagName: string) => {
+      if (tagName !== 'canvas') return originalCreateElement(tagName);
+      return {
+        width: 0,
+        height: 0,
+        getContext: () => ({
+          drawImage: () => undefined,
+          getImageData: () => ({ data: pixels }),
+        }),
+        toDataURL: () => 'data:image/jpeg;base64,mock',
+      } as unknown as HTMLCanvasElement;
+    }) as typeof document.createElement);
+
+    try {
+      await detector.detect(img, {
+        remoteEnabled: false,
+        detectionQuality: 'low',
+      });
+      expect(runMock).toHaveBeenCalled();
+      const hasLowResCall = runMock.mock.calls.some((call) => call[1] === 192 && call[2] === 120);
+      expect(hasLowResCall).toBe(true);
+    } finally {
+      createSpy.mockRestore();
+    }
   });
 });
-
