@@ -111,3 +111,45 @@ export function createSdxlDetectorRunner(options: SdxlDetectorOptions = {}): MlM
 export function registerSdxlDetector(options: SdxlDetectorOptions = {}): void {
   registerMlModel(createSdxlDetectorRunner(options));
 }
+
+/**
+ * Proxy runner for content scripts.
+ *
+ * Content scripts are loaded by Chrome as classic scripts (not ES modules),
+ * even when bundled with `format: 'esm'`. The `@huggingface/transformers`
+ * library uses `import.meta.url` to locate ONNX Runtime WASM files, which
+ * throws a SyntaxError at parse time in classic-script contexts.
+ *
+ * This proxy delegates inference to the background service worker (which IS
+ * an ES module via `"type": "module"` in the manifest) via
+ * `chrome.runtime.sendMessage`. It follows the same pattern as REMOTE_CLASSIFY.
+ *
+ * esbuild tree-shaking: because `detection-pipeline.ts` only imports this
+ * function (not `createSdxlDetectorRunner`), `buildLocalClassifier` and the
+ * dynamic `import('@huggingface/transformers')` are dropped from content
+ * script bundles entirely.
+ */
+export function createSdxlDetectorProxyRunner(): MlModelRunner {
+  return {
+    async run(data: Uint8ClampedArray, width: number, height: number): Promise<number> {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const send = (globalThis as any).chrome?.runtime?.sendMessage as
+          | ((msg: unknown) => Promise<unknown>)
+          | undefined;
+        if (!send) return 0.5;
+        const response = (await send({
+          type: 'SDXL_CLASSIFY',
+          payload: { data, width, height },
+        })) as { ok: boolean; score: number } | undefined;
+        return response?.ok && typeof response.score === 'number' ? response.score : 0.5;
+      } catch {
+        return 0.5;
+      }
+    },
+  };
+}
+
+export function registerSdxlDetectorProxy(): void {
+  registerMlModel(createSdxlDetectorProxyRunner());
+}

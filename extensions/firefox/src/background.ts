@@ -63,6 +63,13 @@ browser.runtime.onMessage.addListener(
         .catch(() => ({ ok: false, dataUrl: null }));
     }
 
+    if (message.type === 'SDXL_CLASSIFY') {
+      // Transformers.js requires ES module context (import.meta.url). Firefox MV2
+      // background pages use classic scripts (IIFE format), so WASM can't run here.
+      // Return a neutral score — heuristics and remote classification remain active.
+      return Promise.resolve({ ok: true, score: 0.5 });
+    }
+
     if (message.type === 'REMOTE_CLASSIFY') {
       const { endpoint, apiKey, contentType, payload } = message.payload as {
         endpoint: string;

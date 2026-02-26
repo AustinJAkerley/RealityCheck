@@ -10,10 +10,14 @@
  * - Broadcast settings changes to active content scripts
  */
 
-import { SettingsStorage, DEFAULT_SETTINGS, ExtensionSettings, createRemoteAdapter } from '@reality-check/core';
+import { SettingsStorage, DEFAULT_SETTINGS, ExtensionSettings, createRemoteAdapter, createSdxlDetectorRunner, MlModelRunner } from '@reality-check/core';
 import type { ContentType, RemotePayload } from '@reality-check/core';
 
 const storage = new SettingsStorage();
+
+// Lazy-initialised SDXL runner — Transformers.js / ONNX Runtime runs in this
+// ES module service worker context where import.meta.url is valid.
+let sdxlRunner: MlModelRunner | null = null;
 
 // Ensure default settings exist on install
 browser.runtime.onInstalled.addListener(async () => {
@@ -70,6 +74,21 @@ browser.runtime.onMessage.addListener(
         })
         .then((dataUrl) => ({ ok: true, dataUrl }))
         .catch(() => ({ ok: false, dataUrl: null }));
+    }
+
+    if (message.type === 'SDXL_CLASSIFY') {
+      // Run the Organika/sdxl-detector model in this ES module service worker.
+      // Content scripts can't load WASM (import.meta.url fails in classic scripts).
+      const { data, width, height } = message.payload as {
+        data: Uint8ClampedArray;
+        width: number;
+        height: number;
+      };
+      sdxlRunner ??= createSdxlDetectorRunner();
+      return sdxlRunner
+        .run(data, width, height)
+        .then((score) => ({ ok: true, score }))
+        .catch(() => ({ ok: true, score: 0.5 }));
     }
 
     if (message.type === 'REMOTE_CLASSIFY') {

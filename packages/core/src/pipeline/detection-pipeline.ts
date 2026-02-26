@@ -6,7 +6,7 @@ import { ContentType, DetectionResult, DetectorOptions, Detector } from '../type
 import { TextDetector } from '../detectors/text-detector.js';
 import { ImageDetector } from '../detectors/image-detector.js';
 import { VideoDetector } from '../detectors/video-detector.js';
-import { registerSdxlDetector } from '../adapters/sdxl-detector-adapter.js';
+import { registerSdxlDetectorProxy } from '../adapters/sdxl-detector-adapter.js';
 
 let localModelInitialized = false;
 
@@ -19,7 +19,7 @@ export class DetectionPipeline {
     videoDetector: Detector = new VideoDetector()
   ) {
     if (!localModelInitialized) {
-      registerSdxlDetector();
+      registerSdxlDetectorProxy();
       localModelInitialized = true;
     }
     this.detectors = new Map([
