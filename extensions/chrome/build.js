@@ -81,6 +81,21 @@ async function build() {
     }
   }
 
+  // Bundle ONNX Runtime WASM files required by Transformers.js.
+  // Chrome extension service workers need these files to be accessible
+  // via chrome.runtime.getURL (set as env.backends.onnx.wasm.wasmPaths
+  // in the adapter) so ONNX Runtime can load them without hitting the CDN.
+  const ortWasmSrc = path.join(REPO_ROOT, 'node_modules', 'onnxruntime-web', 'dist');
+  const ortDist = path.join(DIST, 'ort');
+  if (fs.existsSync(ortWasmSrc)) {
+    fs.mkdirSync(ortDist, { recursive: true });
+    const wasmFiles = fs.readdirSync(ortWasmSrc).filter(f => f.endsWith('.wasm'));
+    for (const f of wasmFiles) {
+      fs.copyFileSync(path.join(ortWasmSrc, f), path.join(ortDist, f));
+    }
+    console.log(`Bundled ${wasmFiles.length} ONNX Runtime WASM files into dist/ort/`);
+  }
+
   // Bundle local model files if they have been pre-downloaded.
   // Run `node scripts/download-model.mjs` once before building to populate the cache.
   if (fs.existsSync(MODEL_CACHE)) {

@@ -79,9 +79,17 @@ async function buildLocalClassifier(modelId: string, hfToken?: string): Promise<
       // threaded mode before the pipeline is created.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const onnxEnv = (env.backends as any)?.onnx;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const getURL: ((path: string) => string) | undefined = (globalThis as any).chrome?.runtime?.getURL;
       if (onnxEnv) {
         onnxEnv.wasm ??= {};
         onnxEnv.wasm.numThreads = 1;
+        // Point ONNX Runtime to the WASM files bundled with the extension (dist/ort/).
+        // Without this, Transformers.js falls back to a CDN URL which may be blocked
+        // or unavailable; pointing to the local bundle ensures fully offline operation.
+        if (getURL) {
+          onnxEnv.wasm.wasmPaths = getURL('ort/');
+        }
       }
 
       // Determine whether the model was pre-downloaded at build time and bundled
@@ -94,12 +102,10 @@ async function buildLocalClassifier(modelId: string, hfToken?: string): Promise<
       //
       // If the local bundle is not present the extension falls back to fetching
       // from HuggingFace Hub (applying hfToken if supplied).
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const chromeRuntime = (globalThis as any).chrome?.runtime;
       let localModelBase: string | null = null;
 
-      if (chromeRuntime?.getURL) {
-        const candidate = chromeRuntime.getURL(`models/${modelId}/`);
+      if (getURL) {
+        const candidate = getURL(`models/${modelId}/`);
         try {
           const probe = await fetch(`${candidate}config.json`);
           if (probe.ok) {
