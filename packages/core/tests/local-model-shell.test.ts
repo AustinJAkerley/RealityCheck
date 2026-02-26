@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { createNonescapeMiniRunner } from '../src/adapters/nonescape-mini-adapter';
+import { createSdxlDetectorRunner } from '../src/adapters/sdxl-detector-adapter';
 
 type RgbaPayload = { width: number; height: number; data: number[] };
 
@@ -17,7 +17,7 @@ describe('Local model shell mode', () => {
 
     const raw = fs.readFileSync(payloadPath, 'utf8');
     const payload = JSON.parse(raw) as RgbaPayload;
-    const runner = createNonescapeMiniRunner();
+    const runner = createSdxlDetectorRunner();
     const score = await runner.run(
       new Uint8ClampedArray(payload.data),
       payload.width,

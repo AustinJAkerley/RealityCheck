@@ -11,13 +11,12 @@ export type WatermarkMode = 'static' | 'flash' | 'pulse' | 'auto-hide';
 export type WatermarkPosition = 'center' | 'top-left' | 'top-right' | 'bottom';
 
 /**
- * Three-tier local classification quality setting.
- * - low:    Canvas heuristics only (color histogram, unique color count, edge analysis).
- *           Near-zero performance impact.
- * - medium: Low tier + gradient smoothness, block noise/texture, saturation distribution.
- *           Balanced cost/accuracy (default).
- * - high:   Medium tier + bundled ML model (TensorFlow.js / ONNX Runtime Web).
- *           Most accurate; requires modern hardware.
+ * Detection quality setting.
+ * Controls the resolution at which images/video frames are sent to the
+ * local SDXL model and (when remoteEnabled) to the remote classifier.
+ * - low:    64 px max dimension — fastest, least accurate.
+ * - medium: 128 px max dimension — balanced.
+ * - high:   512 px max dimension — most accurate; requires more memory/bandwidth.
  */
 export type DetectionQuality = 'low' | 'medium' | 'high';
 
@@ -36,32 +35,17 @@ export interface DetectionResult {
   confidence: ConfidenceLevel;
   /** 0–1 probability score */
   score: number;
+  /** 'local' when only the SDXL model was used; 'remote' when the remote classifier contributed */
   source: 'local' | 'remote';
-  /** Which stage produced the final detection decision. */
-  decisionStage?: 'initial_heuristics' | 'local_ml' | 'remote_ml';
-  /** Raw local ML score, when local model inference was used. */
+  /** Raw local SDXL model score, when local inference ran */
   localModelScore?: number;
-  /** Per-stage heuristic scores used for transparency/debugging. */
-  heuristicScores?: Record<string, number>;
-  /** Set to true when the photorealism pre-filter determined the image is not photorealistic */
-  skippedByPreFilter?: boolean;
   details?: string;
 }
 
-/**
- * Result of the photorealism pre-filter.
- * Indicates whether the image is likely photorealistic and worth further analysis.
- */
-export interface PhotorealismResult {
-  isPhotorealistic: boolean;
-  /** 0–1 score; higher = more photorealistic */
-  score: number;
-}
-
 export interface DetectorOptions {
-  /** Whether to call the remote classifier. Defaults to true. */
+  /** Whether to call the remote classifier. Defaults to false. */
   remoteEnabled: boolean;
-  /** Detection quality tier — controls pre-filter depth. Default: 'medium'. */
+  /** Detection quality tier — controls image downscale resolution. Default: 'high'. */
   detectionQuality: DetectionQuality;
   /**
    * Remote endpoint override. When omitted, DEFAULT_REMOTE_ENDPOINT is used.
@@ -80,9 +64,6 @@ export interface DetectorOptions {
    * must provide this callback to route requests through the CORS-free
    * background context. When `remoteEnabled` is true but this callback is
    * not set, remote classification is skipped (falls back to local score).
-   *
-   * The callback receives the endpoint URL, API key, content type, and payload,
-   * and must return the classification result.
    */
   remoteClassify?: (
     endpoint: string,
@@ -90,23 +71,6 @@ export interface DetectorOptions {
     contentType: ContentType,
     payload: RemotePayload
   ) => Promise<RemoteClassificationResult>;
-  /**
-   * Optional callback to fetch raw image bytes as a base64 data URL.
-   *
-   * Direct `fetch()` from a content script is subject to CORS restrictions,
-   * meaning EXIF and C2PA metadata analysis silently fails for cross-origin images.
-   * Providing this callback (e.g. via a browser-extension background service worker
-   * that is not CORS-restricted) allows the detector to read the original image binary.
-   *
-   * Example (Chrome extension content script):
-   * ```ts
-   * fetchBytes: (url) => new Promise((resolve) => {
-   *   chrome.runtime.sendMessage({ type: 'FETCH_IMAGE_BYTES', payload: url },
-   *     (resp) => resolve(resp?.ok ? resp.dataUrl : null));
-   * })
-   * ```
-   */
-  fetchBytes?: (url: string) => Promise<string | null>;
 }
 
 export interface WatermarkConfig {
@@ -128,9 +92,9 @@ export interface SiteSettings {
 
 export interface ExtensionSettings {
   globalEnabled: boolean;
-  /** Whether to call the remote classifier. Defaults to true. */
+  /** Whether to call the remote classifier. Defaults to false. */
   remoteEnabled: boolean;
-  /** Local classification quality tier. Default: 'medium'. */
+  /** Detection quality tier. Default: 'high'. */
   detectionQuality: DetectionQuality;
   /**
    * Remote endpoint override (advanced/dev only). Empty string = use DEFAULT_REMOTE_ENDPOINT.
@@ -141,13 +105,17 @@ export interface ExtensionSettings {
    */
   remoteApiKey: string;
   /**
+   * HuggingFace API token for downloading gated models (e.g. Organika/sdxl-detector).
+   * Get a free token at https://huggingface.co/settings/tokens (read-only scope is sufficient).
+   * Leave blank until the model is accessible without authentication.
+   */
+  hfToken: string;
+  /**
    * Dev mode: when true, every image and video is immediately watermarked with a green
    * "DEV: Watermarking Active" overlay, bypassing detection entirely.
    * Default: false. Keep this OFF in production.
    */
   devMode: boolean;
-  /** Whether to scan text for AI-generated content. Default: false. */
-  textScanEnabled: boolean;
   watermark: WatermarkConfig;
   siteSettings: Record<string, SiteSettings>;
 }
@@ -167,8 +135,8 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   detectionQuality: 'high',
   remoteEndpoint: '',
   remoteApiKey: '',
+  hfToken: '',
   devMode: true,
-  textScanEnabled: false,
   watermark: DEFAULT_WATERMARK_CONFIG,
   siteSettings: {},
 };
@@ -202,9 +170,8 @@ export interface RemoteClassificationResult {
 }
 
 /**
- * Interface for plugging in an on-device ML model runner (ONNX / TF.js).
- * Implement this interface and register it with `registerMlModel()` in
- * `image-detector.ts` to enable High-tier local inference.
+ * Interface for plugging in an on-device ML model runner (ONNX / Transformers.js).
+ * Register via `registerMlModel()` in `image-detector.ts`.
  */
 export interface MlModelRunner {
   /**

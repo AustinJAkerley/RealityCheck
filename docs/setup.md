@@ -62,6 +62,63 @@ npm install
 
 ---
 
+## 3a. Download the local AI model (one-time, ~90 MB)
+
+RealityCheck uses `Organika/sdxl-detector` to classify images locally in your browser.  The model weights are **not** checked in to the repository — you must download them once before building.
+
+### Step 1 — Accept the model terms (if required)
+
+1. Sign in at [huggingface.co](https://huggingface.co).
+2. Open [https://huggingface.co/Organika/sdxl-detector](https://huggingface.co/Organika/sdxl-detector).
+3. If prompted, click **"Agree and access repository"** to accept the model licence.
+
+### Step 2 — Create a HuggingFace read token (if model is gated)
+
+1. Go to [https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens).
+2. Click **New token** → choose scope **Read** → give it any name → **Generate token**.
+3. Copy the token (it looks like `hf_xxxxxxxxxxxxxxxxxxxx`).
+
+### Step 3 — Run the download script
+
+**Linux/macOS**
+```bash
+HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxx node scripts/download-model.mjs
+```
+
+**Windows (PowerShell)**
+```powershell
+$env:HF_TOKEN="hf_xxxxxxxxxxxxxxxxxxxx"
+node scripts/download-model.mjs
+```
+
+**Windows (Command Prompt)**
+```bat
+set HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxx
+node scripts/download-model.mjs
+```
+
+You should see output like:
+```
+Downloading Organika/sdxl-detector model files (ONNX inference files only)…
+
+Found N files in Organika/sdxl-detector — downloading M (skipping K non-ONNX files)
+
+  ✓ config.json                                         0.0 MB
+  ✓ preprocessor_config.json                            0.0 MB
+  ✓ onnx/model.onnx                                     ~90 MB
+  …
+
+✅  Model saved to extensions/model-cache/Organika/sdxl-detector/
+```
+
+> **Already downloaded a previous version?** If you ran the download script before, delete `extensions/model-cache/` and re-run it. The new script only downloads the files Transformers.js needs (skipping the 347 MB `model.safetensors`).
+
+> **You only need to do this once.** The files are saved to `extensions/model-cache/` and are bundled into every extension build automatically. They are excluded from git (`.gitignore`).
+
+> **No token?** If you skip the model download, the extension still works — it will download the model from HuggingFace automatically on first use. You will need to enter your HF token in the extension's **Advanced settings** popup for the runtime download to succeed.
+
+---
+
 ## 4. Build
 
 ### Build everything at once
@@ -301,9 +358,9 @@ scripts\build.bat test
 cd packages/core && npm test
 ```
 
-All 50 tests should pass:
+All tests should pass:
 ```
-Tests:  50 passed, 50 total
+Tests:  150 passed, 150 total
 ```
 
 ---
@@ -330,6 +387,7 @@ Tests:  50 passed, 50 total
 
 | Problem | Fix |
 |---|---|
+| `Cannot find module '@huggingface/transformers'` | Run `npm install` from the repo root — the local model dependency was added and needs to be installed |
 | `node: command not found` | Node.js not on PATH — re-open terminal after install |
 | `npm install` ENOENT errors | Make sure you're in the repo root, not a subdirectory |
 | `npm install` permission error (Linux) | Don't use `sudo npm install` — fix npm global permissions or use nvm |

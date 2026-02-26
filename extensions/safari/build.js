@@ -23,10 +23,26 @@ const path = require('path');
 
 const ROOT = __dirname;
 const DIST = path.join(ROOT, 'dist');
+const REPO_ROOT = path.resolve(ROOT, '..', '..');
+const MODEL_CACHE = path.join(REPO_ROOT, 'extensions', 'model-cache');
 
 // Ensure dist directories exist
 fs.mkdirSync(path.join(DIST, 'popup'), { recursive: true });
 fs.mkdirSync(path.join(DIST, 'icons'), { recursive: true });
+
+/** Recursively copy a directory tree. */
+function copyDirSync(src, dest) {
+  fs.mkdirSync(dest, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDirSync(srcPath, destPath);
+    } else {
+      fs.copyFileSync(srcPath, destPath);
+    }
+  }
+}
 
 async function build() {
   const shared = {
@@ -77,6 +93,35 @@ async function build() {
   }
 
   console.log('Safari extension built → dist/');
+
+  // Bundle ONNX Runtime WASM files required by Transformers.js.
+  // Both the .wasm binary files AND the .mjs JavaScript companion files are
+  // required: ONNX Runtime dynamically imports ort-wasm-simd-threaded.jsep.mjs
+  // at runtime, which then loads the matching .wasm file.
+  const ortWasmSrc = path.join(REPO_ROOT, 'node_modules', 'onnxruntime-web', 'dist');
+  const ortDist = path.join(DIST, 'ort');
+  if (fs.existsSync(ortWasmSrc)) {
+    fs.mkdirSync(ortDist, { recursive: true });
+    const ortFiles = fs.readdirSync(ortWasmSrc).filter(
+      f => f.startsWith('ort-wasm-simd-threaded') && (f.endsWith('.wasm') || f.endsWith('.mjs'))
+    );
+    for (const f of ortFiles) {
+      fs.copyFileSync(path.join(ortWasmSrc, f), path.join(ortDist, f));
+    }
+    console.log(`Bundled ${ortFiles.length} ONNX Runtime WASM/JS files into dist/ort/`);
+  }
+
+  // Bundle local model files if they have been pre-downloaded.
+  // Run `node scripts/download-model.mjs` once before building to populate the cache.
+  if (fs.existsSync(MODEL_CACHE)) {
+    const modelDist = path.join(DIST, 'models');
+    copyDirSync(MODEL_CACHE, modelDist);
+    console.log('Bundled local model files into dist/models/ (offline inference enabled)');
+  } else {
+    console.log('ℹ️  No model cache found at extensions/model-cache/');
+    console.log('   The extension will download the model (~90 MB) from HuggingFace at runtime.');
+    console.log('   To bundle the model at build time:  node scripts/download-model.mjs');
+  }
 }
 
 build().catch((err) => {

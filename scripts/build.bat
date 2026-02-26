@@ -23,6 +23,9 @@ echo Usage: scripts\build.bat [all ^| core ^| chrome ^| edge ^| firefox ^| safar
 exit /b 1
 
 :do_all
+echo Installing dependencies...
+npm install
+if errorlevel 1 ( echo npm install failed. & exit /b 1 )
 echo Building @reality-check/core...
 cd packages\core && npm run build && cd ..\..
 if errorlevel 1 ( echo Core build failed. & exit /b 1 )
@@ -39,12 +42,18 @@ echo All extensions built successfully.
 goto end
 
 :do_core
+echo Installing dependencies...
+npm install
+if errorlevel 1 ( echo npm install failed. & exit /b 1 )
 echo Building @reality-check/core...
 cd packages\core && npm run build && cd ..\..
 if errorlevel 1 ( echo Core build failed. & exit /b 1 )
 goto end
 
 :do_chrome
+echo Installing dependencies...
+npm install
+if errorlevel 1 ( echo npm install failed. & exit /b 1 )
 echo Building @reality-check/core...
 cd packages\core && npm run build && cd ..\..
 if errorlevel 1 ( echo Core build failed. & exit /b 1 )
@@ -52,6 +61,9 @@ node extensions\chrome\build.js
 goto end
 
 :do_edge
+echo Installing dependencies...
+npm install
+if errorlevel 1 ( echo npm install failed. & exit /b 1 )
 echo Building @reality-check/core...
 cd packages\core && npm run build && cd ..\..
 if errorlevel 1 ( echo Core build failed. & exit /b 1 )
@@ -59,6 +71,9 @@ node extensions\edge\build.js
 goto end
 
 :do_firefox
+echo Installing dependencies...
+npm install
+if errorlevel 1 ( echo npm install failed. & exit /b 1 )
 echo Building @reality-check/core...
 cd packages\core && npm run build && cd ..\..
 if errorlevel 1 ( echo Core build failed. & exit /b 1 )
@@ -66,6 +81,9 @@ node extensions\firefox\build.js
 goto end
 
 :do_safari
+echo Installing dependencies...
+npm install
+if errorlevel 1 ( echo npm install failed. & exit /b 1 )
 echo Building @reality-check/core...
 cd packages\core && npm run build && cd ..\..
 if errorlevel 1 ( echo Core build failed. & exit /b 1 )
@@ -73,6 +91,9 @@ node extensions\safari\build.js
 goto end
 
 :do_test
+echo Installing dependencies...
+npm install
+if errorlevel 1 ( echo npm install failed. & exit /b 1 )
 cd packages\core && npm test && cd ..\..
 goto end
 

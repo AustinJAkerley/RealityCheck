@@ -1,8 +1,9 @@
 /**
  * RealityCheck Chrome Extension — Content Script
  *
- * Scans visible page content (images, videos, text blocks) and applies
- * watermarks to likely AI-generated content.
+ * Scans visible page content (images, videos) and applies watermarks to
+ * likely AI-generated content using the Organika/sdxl-detector local ML
+ * model, with optional remote ML escalation for uncertain cases.
  *
  * Key design decisions:
  * - Only processes elements in/near the viewport (IntersectionObserver)
@@ -17,7 +18,6 @@ import {
   DetectorOptions,
   applyMediaWatermark,
   applyNotAIWatermark,
-  applyTextWatermark,
   WatermarkHandle,
 } from '@reality-check/core';
 import type { ContentType, RemotePayload, RemoteClassificationResult } from '@reality-check/core';
@@ -26,26 +26,17 @@ const pipeline = new DetectionPipeline();
 
 /**
  * Track active watermark handles for elements that have been watermarked.
- * Map (not WeakMap) so we can iterate and remove all overlays when settings
- * change (e.g. toggling devMode on/off).
+ * Map (not WeakMap) so we can iterate and remove all overlays when settings change.
  */
 const handles = new Map<Element, WatermarkHandle>();
 
 /**
  * Elements currently being analysed. Guards against concurrent calls to the
- * same element (e.g. from runScan() and IntersectionObserver firing at the
- * same time) interleaving their async work — particularly the video frame
- * seeks inside analyzeVideoFrames, which corrupt each other when interleaved.
+ * same element interleaving their async work (particularly video frame seeks).
  */
 const processing = new Set<Element>();
 
 let currentSettings: ExtensionSettings | null = null;
-
-function decisionStageLabel(stage: string | undefined): string {
-  if (stage === 'local_ml') return 'Local ML';
-  if (stage === 'remote_ml') return 'Remote ML';
-  return 'Initial';
-}
 
 const BASE36_FIVE_DIGITS = 36 ** 5;
 const _seenDetectionIds = new Set<string>();
@@ -92,21 +83,6 @@ function getDetectorOptions(settings: ExtensionSettings): DetectorOptions {
           }
         );
       }),
-    // Fetch image bytes via the background service worker, which is not
-    // subject to CORS restrictions, enabling EXIF/C2PA analysis on cross-origin images.
-    fetchBytes: (url: string) =>
-      new Promise<string | null>((resolve) => {
-        chrome.runtime.sendMessage(
-          { type: 'FETCH_IMAGE_BYTES', payload: url },
-          (response: { ok: boolean; dataUrl: string | null } | undefined) => {
-            if (chrome.runtime.lastError || !response?.ok) {
-              resolve(null);
-            } else {
-              resolve(response.dataUrl ?? null);
-            }
-          }
-        );
-      }),
   };
 }
 
@@ -120,7 +96,6 @@ function isSiteEnabled(settings: ExtensionSettings): boolean {
 
 // ── Video thumbnail helpers ──────────────────────────────────────────────────
 
-/** Check whether two bounding rects overlap by more than 50% of the smaller one's area. */
 function rectsOverlap(a: DOMRect, b: DOMRect): boolean {
   const overlapX = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left));
   const overlapY = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
@@ -129,11 +104,6 @@ function rectsOverlap(a: DOMRect, b: DOMRect): boolean {
   return smallerArea > 0 && overlapArea > 0.5 * smallerArea;
 }
 
-/**
- * Check if an image is likely a video thumbnail/poster by checking whether
- * ANY <video> on the page visually overlaps with it.  Pure bounding-rect
- * comparison — independent of DOM nesting depth.
- */
 function isVideoThumbnail(img: HTMLImageElement): boolean {
   const ir = img.getBoundingClientRect();
   if (ir.width === 0 || ir.height === 0) return false;
@@ -146,11 +116,6 @@ function isVideoThumbnail(img: HTMLImageElement): boolean {
   return false;
 }
 
-/**
- * Remove watermarks from ALL watermarked images that visually overlap with a
- * video.  Iterates the handles map directly so it works regardless of DOM
- * nesting depth between the <img> and <video>.
- */
 function removeThumbnailWatermarks(video: HTMLVideoElement): void {
   const vr = video.getBoundingClientRect();
   if (vr.width === 0 || vr.height === 0) return;
@@ -190,40 +155,20 @@ async function processImage(img: HTMLImageElement, settings: ExtensionSettings):
     const durationMs = Math.round((performance.now() - t0) * 100) / 100;
     console.info('[RealityCheck] Image detection', {
       detectionId,
-      stage: decisionStageLabel(result.decisionStage),
       score: result.score,
       source: result.source,
       localModelScore: result.localModelScore,
-      heuristicScores: result.heuristicScores,
       markedAsAI: result.isAIGenerated,
       details: result.details,
       durationMs,
     });
 
-    // Guard again after await: a concurrent call may have already watermarked this element.
     if (handles.has(img)) return;
 
     if (result.isAIGenerated) {
-      const handle = applyMediaWatermark(
-        img,
-        result.confidence,
-        settings.watermark,
-        decisionStageLabel(result.decisionStage),
-        result.details,
-        detectionId
-      );
-      handles.set(img, handle);
+      handles.set(img, applyMediaWatermark(img, result.confidence, settings.watermark, result.source, result.details, detectionId));
     } else if (settings.devMode) {
-      handles.set(
-        img,
-        applyNotAIWatermark(
-          img,
-          settings.watermark,
-          decisionStageLabel(result.decisionStage),
-          result.details,
-          detectionId
-        )
-      );
+      handles.set(img, applyNotAIWatermark(img, settings.watermark, result.source, result.details, detectionId));
     }
   } finally {
     processing.delete(img);
@@ -245,78 +190,26 @@ async function processVideo(video: HTMLVideoElement, settings: ExtensionSettings
     const durationMs = Math.round((performance.now() - t0) * 100) / 100;
     console.info('[RealityCheck] Video detection', {
       detectionId,
-      stage: decisionStageLabel(result.decisionStage),
       score: result.score,
       source: result.source,
       localModelScore: result.localModelScore,
-      heuristicScores: result.heuristicScores,
       markedAsAI: result.isAIGenerated,
       details: result.details,
       durationMs,
     });
 
-    // Guard again after await: a concurrent call may have already watermarked this element.
     if (handles.has(video)) return;
 
     if (result.isAIGenerated) {
-      const handle = applyMediaWatermark(
-        video,
-        result.confidence,
-        settings.watermark,
-        decisionStageLabel(result.decisionStage),
-        result.details,
-        detectionId
-      );
-      handles.set(video, handle);
+      handles.set(video, applyMediaWatermark(video, result.confidence, settings.watermark, result.source, result.details, detectionId));
     } else if (settings.devMode) {
-      handles.set(
-        video,
-        applyNotAIWatermark(
-          video,
-          settings.watermark,
-          decisionStageLabel(result.decisionStage),
-          result.details,
-          detectionId
-        )
-      );
+      handles.set(video, applyNotAIWatermark(video, settings.watermark, result.source, result.details, detectionId));
     }
 
-    // Remove watermarks from thumbnail images that visually overlap this video,
-    // preventing the double watermark issue when both a thumbnail <img> and
-    // the <video> element get independently analysed.
+    // Remove thumbnail watermarks that overlap this video element.
     removeThumbnailWatermarks(video);
   } finally {
     processing.delete(video);
-  }
-}
-
-/** Minimum text length to bother analysing */
-const MIN_TEXT_LENGTH = 150;
-
-/** Elements whose tags we consider for text analysis */
-const TEXT_TAGS = new Set(['P', 'ARTICLE', 'SECTION', 'BLOCKQUOTE', 'DIV', 'SPAN', 'LI']);
-
-async function processTextNode(el: HTMLElement, settings: ExtensionSettings): Promise<void> {
-  if (handles.has(el) || processing.has(el)) return;
-  const text = el.innerText?.trim() ?? '';
-  if (text.length < MIN_TEXT_LENGTH) return;
-  // Skip if element has many child elements (likely a layout container)
-  if (el.children.length > 10) return;
-
-  processing.add(el);
-  try {
-    const opts = getDetectorOptions(settings);
-    const result = await pipeline.analyzeText(text, opts);
-
-    // Guard again after await: a concurrent call may have already watermarked this element.
-    if (handles.has(el)) return;
-
-    if (result.isAIGenerated) {
-      const handle = applyTextWatermark(el, result.confidence, settings.watermark);
-      handles.set(el, handle);
-    }
-  } finally {
-    processing.delete(el);
   }
 }
 
@@ -334,17 +227,10 @@ function scanVideos(settings: ExtensionSettings): void {
   });
 }
 
-function scanText(settings: ExtensionSettings): void {
-  document.querySelectorAll<HTMLElement>(Array.from(TEXT_TAGS).join(',')).forEach((el) => {
-    processTextNode(el, settings).catch(console.error);
-  });
-}
-
 function runScan(settings: ExtensionSettings): void {
   if (!isSiteEnabled(settings)) return;
   scanImages(settings);
   scanVideos(settings);
-  if (settings.textScanEnabled) scanText(settings);
 }
 
 // ── Intersection Observer (viewport-only scanning) ───────────────────────────
@@ -362,21 +248,12 @@ function startObserver(): void {
           processImage(el, currentSettings).catch(console.error);
         } else if (el instanceof HTMLVideoElement) {
           processVideo(el, currentSettings).catch(console.error);
-        } else if (currentSettings.textScanEnabled && TEXT_TAGS.has(el.tagName)) {
-          processTextNode(el, currentSettings).catch(console.error);
         }
       }
     },
-    { rootMargin: '200px' } // pre-load slightly outside viewport
+    { rootMargin: '200px' }
   );
-
-  // Observe existing elements
-  const selParts = ['img', 'video'];
-  if (currentSettings?.textScanEnabled) {
-    selParts.push(...Array.from(TEXT_TAGS).map((t) => t.toLowerCase()));
-  }
-  const selector = selParts.join(', ');
-  document.querySelectorAll<HTMLElement>(selector).forEach((el) => observer!.observe(el));
+  document.querySelectorAll<HTMLElement>('img, video').forEach((el) => observer!.observe(el));
 }
 
 // ── MutationObserver (dynamic content) ───────────────────────────────────────
@@ -384,10 +261,19 @@ function startObserver(): void {
 let mutationDebounce: ReturnType<typeof setTimeout> | null = null;
 
 function startMutationObserver(settings: ExtensionSettings): void {
-  const mutObs = new MutationObserver(() => {
+  const mutObs = new MutationObserver((mutations) => {
+    // Skip re-scan when the only mutations are RC overlay additions/removals
+    const allRcOverlay = mutations.every((m) => {
+      const nodes = [...Array.from(m.addedNodes), ...Array.from(m.removedNodes)];
+      return (
+        nodes.length > 0 &&
+        nodes.every((n) => n instanceof Element && (n as Element).classList.contains('rc-watermark'))
+      );
+    });
+    if (allRcOverlay) return;
+
     if (mutationDebounce) clearTimeout(mutationDebounce);
     mutationDebounce = setTimeout(() => {
-      // Clean up watermarks for elements no longer in the DOM (SPA navigation, dynamic removal)
       handles.forEach((handle, el) => {
         if (!el.isConnected) {
           handle.remove();
@@ -414,15 +300,11 @@ async function init(): Promise<void> {
   runScan(settings);
 }
 
-// Listen for settings updates from background
 chrome.runtime.onMessage.addListener(
   (message: { type: string; payload?: unknown }) => {
     if (message.type === 'SETTINGS_UPDATED') {
       currentSettings = message.payload as ExtensionSettings;
       // Remove all existing watermarks before re-scanning with updated settings.
-      // Without this, elements that were watermarked (e.g. flagged as AI) would
-      // be skipped on the next scan and never receive the new watermark style
-      // (e.g. toggling devMode on/off would have no effect on them).
       handles.forEach((handle) => handle.remove());
       handles.clear();
       if (isSiteEnabled(currentSettings)) {

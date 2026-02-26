@@ -16,6 +16,17 @@ param(
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 
+function Invoke-Install {
+    Write-Host "Installing dependencies..." -ForegroundColor Cyan
+    Push-Location $RepoRoot
+    try {
+        npm install
+        if ($LASTEXITCODE -ne 0) { throw "npm install failed (exit $LASTEXITCODE)" }
+    } finally {
+        Pop-Location
+    }
+}
+
 function Invoke-CoreBuild {
     Write-Host "Building @reality-check/core..." -ForegroundColor Cyan
     Push-Location "$RepoRoot\packages\core"
@@ -64,6 +75,7 @@ function Invoke-Tests {
 
 switch ($Target.ToLower()) {
     "all" {
+        Invoke-Install
         Invoke-CoreBuild
         Invoke-ExtensionBuild "chrome"
         Invoke-ExtensionBuild "edge"
@@ -72,30 +84,36 @@ switch ($Target.ToLower()) {
         Write-Host "`nAll extensions built successfully." -ForegroundColor Green
     }
     "core" {
+        Invoke-Install
         Invoke-CoreBuild
         Write-Host "Core built successfully." -ForegroundColor Green
     }
     "chrome" {
+        Invoke-Install
         Invoke-CoreBuild
         Invoke-ExtensionBuild "chrome"
         Write-Host "Chrome extension built successfully." -ForegroundColor Green
     }
     "edge" {
+        Invoke-Install
         Invoke-CoreBuild
         Invoke-ExtensionBuild "edge"
         Write-Host "Edge extension built successfully." -ForegroundColor Green
     }
     "firefox" {
+        Invoke-Install
         Invoke-CoreBuild
         Invoke-ExtensionBuild "firefox"
         Write-Host "Firefox extension built successfully." -ForegroundColor Green
     }
     "safari" {
+        Invoke-Install
         Invoke-CoreBuild
         Invoke-ExtensionBuild "safari"
         Write-Host "Safari extension built successfully." -ForegroundColor Green
     }
     "test" {
+        Invoke-Install
         Invoke-Tests
     }
     "clean" {
