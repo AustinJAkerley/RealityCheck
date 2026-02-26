@@ -1,20 +1,7 @@
 /**
  * @jest-environment jsdom
  */
-import {
-  computeLocalImageScore,
-  computeVisualAIScore,
-  countUniqueColors,
-  computeChannelEntropy,
-  computeEdgeComplexity,
-  computeBlockVariance,
-  computeSaturationVariance,
-  scoreLowTier,
-  scoreMediumTier,
-  runPhotorealismPreFilter,
-  getDownscaleMaxDim,
-} from '../src/detectors/image-detector';
-import { ImageDetector } from '../src/detectors/image-detector';
+import { registerMlModel, isMlModelAvailable, runMlModelScore, getDownscaleMaxDim, ImageDetector } from '../src/detectors/image-detector';
 
 const opts = { remoteEnabled: false, detectionQuality: 'high' as const };
 
@@ -25,6 +12,12 @@ describe('isMlModelAvailable', () => {
     registerMlModel({ run: async () => 0.5 });
     expect(isMlModelAvailable()).toBe(true);
   });
+});
+
+describe('getDownscaleMaxDim', () => {
+  test('low → 64', () => expect(getDownscaleMaxDim('low')).toBe(64));
+  test('medium → 128', () => expect(getDownscaleMaxDim('medium')).toBe(128));
+  test('high → 512', () => expect(getDownscaleMaxDim('high')).toBe(512));
 });
 
 describe('runMlModelScore', () => {
@@ -83,7 +76,6 @@ describe('ImageDetector', () => {
     const detector = new ImageDetector();
     const r1 = await detector.detect('https://example.com/same-img.png', opts);
     const r2 = await detector.detect('https://example.com/same-img.png', opts);
-    // Same reference from cache on second call
     expect(r1).toBe(r2);
   }, TIMEOUT);
 

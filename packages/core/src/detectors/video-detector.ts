@@ -1,37 +1,41 @@
 /**
  * Video detector — local SDXL model on captured frames + optional remote escalation.
  *
- * Flow:
- * 1. Check URL against known AI video platform patterns.
- * 2. Attempt multi-frame canvas capture (same-origin only).
- *    Captures up to 5 frames at evenly-spaced timestamps and computes:
- *    - Frame difference variance (low variance = temporal inconsistency signal)
- *    - AI visual scoring on individual frames
- * 3. If remoteEnabled: send quality-based frames at 0.25s intervals to the remote
- *    classifier (5 frames for low, 10 for medium, 20 for high quality) and blend
- *    with URL + temporal scores.
+ * Pipeline:
+ * 1. Capture FRAME_COUNT frames from the video element at evenly-spaced timestamps.
+ * 2. Run the Organika/sdxl-detector local ML model on each frame, then average.
+ * 3. If the averaged score is uncertain (UNCERTAIN_MIN–UNCERTAIN_MAX) AND
+ *    options.remoteEnabled is true, capture quality-based frames at 0.25s intervals
+ *    and send them to the remote classifier, then blend: 30% local + 70% remote.
+ * 4. Return a DetectionResult.
  *
  * No URL pattern matching, no temporal/frame-diff analysis — pure ML.
  * Cross-origin videos cannot have their frames read (canvas taint); in that
  * case the detector returns a neutral 0.5 score.
+ *
+ * Remote video frames:
+ * - low quality:    5 frames at 0.25s intervals
+ * - medium quality: 10 frames at 0.25s intervals
+ * - high quality:   20 frames at 0.25s intervals
  */
-import { DetectionResult, DetectorOptions, Detector, RemotePayload } from '../types.js';
+import { DetectionResult, DetectorOptions, Detector, RemotePayload, DetectionQuality } from '../types.js';
 import { DEFAULT_REMOTE_ENDPOINT } from '../types.js';
 import { DetectionCache } from '../utils/cache.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
 import { hashUrl, hashDataUrl } from '../utils/hash.js';
-import { computeVisualAIScore, runMlModelScore, getDownscaleMaxDim } from './image-detector.js';
+import { runMlModelScore, getDownscaleMaxDim } from './image-detector.js';
 
 // ── Frame capture helpers ────────────────────────────────────────────────────
 
-/** Number of frames sampled for averaged detection */
+/** Number of frames sampled for local SDXL averaged detection */
 const FRAME_COUNT = 5;
 
-function getDownscaleMaxDim(quality: DetectorOptions['detectionQuality']): number {
-  if (quality === 'high') return 512;
-  if (quality === 'medium') return 128;
-  return 64;
-}
+/** Quality-based frame counts for remote video classification (sampled at 0.25s intervals) */
+const REMOTE_FRAME_COUNTS: Record<DetectionQuality, number> = {
+  low: 5,
+  medium: 10,
+  high: 20,
+};
 
 function captureFramePixels(
   video: HTMLVideoElement,
@@ -68,40 +72,6 @@ function seekTo(video: HTMLVideoElement, time: number, timeoutMs = 500): Promise
   });
 }
 
-/** Number of frames to sample for temporal analysis */
-const MULTI_FRAME_COUNT = 5;
-/** Downscale size for temporal frame comparison */
-const FRAME_ANALYSIS_SIZE = 64;
-const OBVIOUS_METADATA_AI_THRESHOLD = 0.7;
-const LOCAL_UNCERTAIN_MIN = 0.25;
-const LOCAL_UNCERTAIN_MAX = 0.75;
-const VIDEO_LOCAL_AI_THRESHOLD = 0.45;
-
-function getMlFrameDimensions(
-  width: number,
-  height: number,
-  quality: DetectorOptions['detectionQuality']
-): { width: number; height: number } {
-  if (quality === 'high') {
-    return { width, height };
-  }
-  if (quality === 'medium') {
-    return { width: Math.max(1, Math.round(width / 2)), height: Math.max(1, Math.round(height / 2)) };
-  }
-  const scale = Math.min(1, 192 / Math.max(width, height));
-  return {
-    width: Math.max(1, Math.round(width * scale)),
-    height: Math.max(1, Math.round(height * scale)),
-  };
-}
-
-/** Quality-based frame counts for remote video classification (sampled at 0.25s intervals) */
-const REMOTE_FRAME_COUNTS: Record<DetectionQuality, number> = {
-  low: 5,
-  medium: 10,
-  high: 20,
-};
-
 /**
  * Capture N frames at fixed 0.25s intervals for remote classification.
  * Sampling begins at t=0.25s (not t=0) to avoid unloaded or black frames
@@ -111,7 +81,8 @@ const REMOTE_FRAME_COUNTS: Record<DetectionQuality, number> = {
  */
 async function captureFramesForRemote(
   video: HTMLVideoElement,
-  count: number
+  count: number,
+  maxDim: number
 ): Promise<string[]> {
   if (video.videoWidth === 0 || video.videoHeight === 0) return [];
   const frames: string[] = [];
@@ -120,103 +91,14 @@ async function captureFramesForRemote(
     const time = 0.25 * (i + 1);
     if (isFinite(video.duration) && video.duration > 0 && time > video.duration) break;
     await seekTo(video, time);
-    const frame = captureVideoFrame(video);
-    if (frame) frames.push(frame);
+    const frame = captureFramePixels(video, maxDim);
+    if (frame) frames.push(frame.dataUrl);
   }
   await seekTo(video, savedTime);
   return frames;
 }
 
-/**
- * Sample multiple frames from the video and compute temporal consistency.
- *
- * Returns an object with:
- * - `frames`: data URLs of captured frames (for remote classification)
- * - `temporalScore`: 0–1 AI-generation signal from temporal analysis
- *   (higher = more temporally inconsistent = more likely deepfake)
- * - `visualScore`: average visual AI score across frames
- */
-async function analyzeVideoFrames(
-  video: HTMLVideoElement,
-  quality: DetectorOptions['detectionQuality']
-): Promise<{
-  frames: string[];
-  temporalScore: number;
-  visualScore: number;
-  modelScore: number;
-  hasModelScore: boolean;
-}> {
-  const duration = video.duration;
-  if (!isFinite(duration) || duration <= 0 || video.videoWidth === 0) {
-    return { frames: [], temporalScore: 0, visualScore: 0, modelScore: 0, hasModelScore: false };
-  }
-
-  const frameDataUrls: string[] = [];
-  const framePixels: Uint8ClampedArray[] = [];
-  const mlFramePixels: Uint8ClampedArray[] = [];
-  const mlDims = getMlFrameDimensions(video.videoWidth, video.videoHeight, quality);
-
-  // Sample at evenly-spaced intervals, skipping the very start and end
-  const step = duration / (MULTI_FRAME_COUNT + 1);
-  const savedTime = video.currentTime;
-
-  for (let i = 1; i <= MULTI_FRAME_COUNT; i++) {
-    await seekTo(video, step * i);
-    const pixels = captureFramePixels(video, FRAME_ANALYSIS_SIZE, FRAME_ANALYSIS_SIZE);
-    if (pixels) framePixels.push(pixels);
-    const mlPixels = captureFramePixels(video, mlDims.width, mlDims.height);
-    if (mlPixels) mlFramePixels.push(mlPixels);
-    const dataUrl = captureVideoFrame(video, getDownscaleMaxDim(quality ?? 'medium'));
-    if (dataUrl) frameDataUrls.push(dataUrl);
-  }
-
-  // Restore original time
-  await seekTo(video, savedTime);
-
-  if (framePixels.length < 2) {
-    return { frames: frameDataUrls, temporalScore: 0, visualScore: 0, modelScore: 0, hasModelScore: false };
-  }
-
-  // Compute frame-to-frame differences
-  const diffs: number[] = [];
-  for (let i = 1; i < framePixels.length; i++) {
-    diffs.push(meanFrameDifference(framePixels[i - 1], framePixels[i]));
-  }
-  const meanDiff = diffs.reduce((a, b) => a + b, 0) / diffs.length;
-  const diffVariance =
-    diffs.reduce((a, b) => a + (b - meanDiff) ** 2, 0) / diffs.length;
-
-  // Deepfake temporal signal:
-  // Very low mean difference across ALL frames (< 3 lum units on a 0–255 scale)
-  // = nearly static content, which is unusual for real video (even a talking-head
-  // video shows eye blinks and subtle motion). Threshold of 3 was chosen as the
-  // lower bound of observable luminance change for a 64×64 sample of real video
-  // (typical talking-head: ~5–15 lum units; looped/generated: < 3).
-  // High variance in frame differences = inconsistent motion = deepfake artefact.
-  const staticScore = meanDiff < 3 ? 0.25 : 0; // nearly static
-  const inconsistencyScore = Math.min(0.25, diffVariance / 500);
-  const temporalScore = staticScore + inconsistencyScore;
-
-  // Average visual AI score across frames
-  const visualScores = framePixels.map((px) =>
-    computeVisualAIScore(px, FRAME_ANALYSIS_SIZE, FRAME_ANALYSIS_SIZE)
-  );
-  const visualScore =
-    visualScores.reduce((a, b) => a + b, 0) / visualScores.length;
-
-  let modelScore = 0;
-  let hasModelScore = false;
-  const modelScores = await Promise.all(
-    mlFramePixels.map((px) => runMlModelScore(px, mlDims.width, mlDims.height))
-  );
-  const usableScores = modelScores.filter((s): s is number => typeof s === 'number');
-  if (usableScores.length > 0) {
-    modelScore = usableScores.reduce((a, b) => a + b, 0) / usableScores.length;
-    hasModelScore = true;
-  }
-
-  return { frames: frameDataUrls, temporalScore, visualScore, modelScore, hasModelScore };
-}
+// ── Scoring helpers ──────────────────────────────────────────────────────────
 
 function scoreToConfidence(score: number): DetectionResult['confidence'] {
   if (score >= 0.65) return 'high';
@@ -250,7 +132,7 @@ export class VideoDetector implements Detector {
     const quality = options.detectionQuality ?? 'high';
     const maxDim = getDownscaleMaxDim(quality);
 
-    // Step 1: SDXL local model on captured frames
+    // Step 1: SDXL local model on FRAME_COUNT evenly-spaced frames
     let localScore: number | null = null;
     let bestFrameDataUrl: string | null = null;
     let bestFrameScore = -Infinity;
@@ -267,7 +149,6 @@ export class VideoDetector implements Detector {
           const s = await runMlModelScore(frame.pixels, frame.width, frame.height);
           if (s !== null) {
             scores.push(s);
-            // Keep the most AI-like frame for remote escalation
             if (s > bestFrameScore) {
               bestFrameScore = s;
               bestFrameDataUrl = frame.dataUrl;
@@ -288,166 +169,38 @@ export class VideoDetector implements Detector {
       ? `SDXL avg across ${FRAME_COUNT} frames: ${score.toFixed(3)}`
       : 'No video element or frames could not be captured (cross-origin)';
 
-    // Step 2: Remote escalation when score is uncertain and remote is enabled
+    // Step 2: Remote escalation when score is uncertain and remote is enabled.
+    // Sends quality-based multi-frame batches at 0.25s intervals:
+    //   low=5, medium=10, high=20 frames
     const uncertain = score >= UNCERTAIN_MIN && score <= UNCERTAIN_MAX;
-    if (uncertain && options.remoteEnabled && options.remoteClassify && (video || src)) {
+    if (uncertain && options.remoteEnabled && options.remoteClassify && video) {
       const rl = this.rateLimiters[quality];
       if (rl.consume()) {
         try {
-          const frameDataUrl = video ? captureVideoFrame(video, getDownscaleMaxDim(quality)) : null;
           const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
           const apiKey = options.remoteApiKey || '';
-          const payload: RemotePayload = {
-            imageHash: hashDataUrl(bestFrameDataUrl ?? src),
-            imageDataUrl: bestFrameDataUrl ?? undefined,
-            imageUrl: bestFrameDataUrl ? undefined : src,
-          };
+          // Capture quality-based frames for the remote classifier
+          const remoteFrames = await captureFramesForRemote(
+            video,
+            REMOTE_FRAME_COUNTS[quality],
+            maxDim
+          );
+          const payload: RemotePayload = remoteFrames.length > 0
+            ? {
+                imageHash: hashDataUrl(remoteFrames[0]),
+                videoFrames: remoteFrames,
+              }
+            : {
+                imageHash: hashDataUrl(bestFrameDataUrl ?? src),
+                imageDataUrl: bestFrameDataUrl ?? undefined,
+                imageUrl: bestFrameDataUrl ? undefined : src,
+              };
           const remote = await options.remoteClassify(endpoint, apiKey, 'video', payload);
-          finalScore = remote.label === 'error' ? 0 : remote.score;
-          heuristicScores.remote = finalScore;
-          details =
-            remote.label === 'error'
-              ? 'Remote-only mode: remote classification returned error'
-              : `Remote-only mode: remote score ${remote.score.toFixed(2)}`;
-        } catch (err) {
-          rl.returnToken();
-          details = `Remote-only mode failed: ${err instanceof Error ? err.message : 'unknown error'}`;
-          console.warn('[RealityCheck] Remote video classification failed:', err instanceof Error ? err.message : err);
-        }
-      }
-
-      const remoteOnly: DetectionResult = {
-        contentType: 'video',
-        isAIGenerated: finalScore >= 0.35,
-        confidence: scoreToConfidence(finalScore),
-        score: finalScore,
-        source: 'remote',
-        decisionStage: 'remote_ml',
-        heuristicScores,
-        details,
-      };
-      this.cache.set(cacheKey, remoteOnly);
-      return remoteOnly;
-    }
-
-    // Step 1: URL heuristics
-    const localScore = matchesAIVideoUrl(src) ? 0.7 : 0;
-    const heuristicScores: Record<string, number> = {
-      metadataUrl: localScore,
-    };
-    const isObviousMetadataAI = localScore >= OBVIOUS_METADATA_AI_THRESHOLD;
-    let decisionStage: DetectionResult['decisionStage'] = 'initial_heuristics';
-
-    let finalScore = localScore;
-    let source: DetectionResult['source'] = 'local';
-    let details = isObviousMetadataAI
-      ? `Initial heuristics (metadata/URL) flagged obvious AI (${localScore.toFixed(2)})`
-      : `Initial heuristics score: ${localScore.toFixed(2)}`;
-    let localAiLocked = isObviousMetadataAI;
-
-    if (isObviousMetadataAI) {
-      finalScore = 0.95;
-      const immediate: DetectionResult = {
-        contentType: 'video',
-        isAIGenerated: true,
-        confidence: scoreToConfidence(finalScore),
-        score: finalScore,
-        source,
-        decisionStage,
-        heuristicScores,
-        details,
-      };
-      this.cache.set(cacheKey, immediate);
-      return immediate;
-    }
-
-    // Step 2: Multi-frame temporal analysis (same-origin video elements only).
-    // This runs before remote classification to enrich the local signal.
-    let temporalScore = 0;
-    let videoVisualScore = 0;
-    let videoModelScore = 0;
-    let hasVideoModelScore = false;
-    let localModelScore: number | undefined = undefined;
-    let capturedFrames: string[] = [];
-    if (video) {
-      try {
-        const analysis = await analyzeVideoFrames(video, options.detectionQuality);
-        temporalScore = analysis.temporalScore;
-        videoVisualScore = analysis.visualScore;
-        videoModelScore = analysis.modelScore;
-        hasVideoModelScore = analysis.hasModelScore;
-        heuristicScores.temporal = temporalScore;
-        heuristicScores.visual = videoVisualScore;
-        heuristicScores.localMl = videoModelScore;
-        if (hasVideoModelScore) localModelScore = videoModelScore;
-        capturedFrames = analysis.frames;
-
-        // Blend temporal and visual signals into local score.
-        // Visual boost increased from 0.2 to 0.35 to give pixel analysis
-        // meaningful weight when there is no URL match.
-        const temporalBoost = Math.min(0.3, temporalScore);
-        const visualBoost = videoVisualScore * 0.35;
-        const heuristicComposite = Math.min(1, localScore + temporalBoost + visualBoost);
-        if (heuristicComposite >= LOCAL_UNCERTAIN_MAX) {
-          finalScore = 0.95;
-          localAiLocked = true;
-          details = `Initial heuristics independently flagged AI (${heuristicComposite.toFixed(2)})`;
-        }
-        if (hasVideoModelScore) {
-          // Use local ML as an independent AI trigger.
-          if (videoModelScore >= LOCAL_UNCERTAIN_MAX) {
-            finalScore = 0.95;
-            localAiLocked = true;
-          } else if (videoModelScore <= LOCAL_UNCERTAIN_MIN) {
-            if (!localAiLocked) finalScore = 0.05;
-          } else {
-            if (!localAiLocked) {
-              finalScore = Math.min(
-                LOCAL_UNCERTAIN_MAX,
-                heuristicComposite * 0.6 + videoModelScore * 0.4
-              );
-            }
-          }
-          decisionStage = 'local_ml';
-          details = `Local ML frame verdict: ${videoModelScore >= 0.5 ? 'AI generated' : 'Not AI generated'} (${videoModelScore.toFixed(2)}), temporal=${temporalScore.toFixed(2)}`;
-        } else {
-          const modelBoost = videoModelScore * 0.45;
-          finalScore = Math.min(1, localScore + temporalBoost + visualBoost + modelBoost);
-          details = `Initial+temporal+visual score: ${finalScore.toFixed(2)}`;
-        }
-      } catch {
-        // Frame analysis failed — continue with URL score only
-      }
-    }
-
-    // Step 3: Remote classification — send quality-based frames at 0.25s intervals.
-    if (options.remoteEnabled && video) {
-      const quality = options.detectionQuality ?? 'medium';
-      const rl = this.rateLimiters[quality];
-      if (rl.consume()) {
-        try {
-          // Capture quality-based frames at 0.25s intervals for remote classification.
-          const remoteFrames = await captureFramesForRemote(video, REMOTE_FRAME_COUNTS[quality]);
-          // Fall back to a single frame when captureFramesForRemote returned nothing
-          // (e.g. video not yet loaded, zero dimensions, cross-origin).
-          const fallbackFrame =
-            capturedFrames.length > 0 ? capturedFrames[0] : captureVideoFrame(video, getDownscaleMaxDim(quality));
-          if (remoteFrames.length > 0 || fallbackFrame) {
-            const imageHash = hashDataUrl(remoteFrames[0] ?? fallbackFrame ?? '');
-            const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
-            const apiKey = options.remoteApiKey || '';
-            const payload: RemotePayload = {
-              imageHash,
-              ...(remoteFrames.length > 0
-                ? { videoFrames: remoteFrames }
-                : { imageDataUrl: fallbackFrame ?? undefined }),
-            };
-            if (!options.remoteClassify) throw new Error('remoteClassify callback required');
-            const result = await options.remoteClassify(endpoint, apiKey, 'video', payload);
-            finalScore = finalScore * 0.3 + result.score * 0.7;
-            heuristicScores.remote = result.score;
+          if (remote.label !== 'error') {
+            const blended = score * 0.3 + remote.score * 0.7;
+            score = blended;
             source = 'remote';
-            details = `SDXL local: ${(localScore ?? 0.5).toFixed(3)}, remote: ${remote.score.toFixed(3)}, blended: ${blended.toFixed(3)}`;
+            details = `SDXL local: ${localScore?.toFixed(3) ?? '0.500'}, remote: ${remote.score.toFixed(3)}, blended: ${blended.toFixed(3)} (${remoteFrames.length} frames sent)`;
           }
         } catch (err) {
           rl.returnToken();
