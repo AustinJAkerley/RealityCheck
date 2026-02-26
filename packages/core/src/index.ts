@@ -17,3 +17,4 @@ export * from './utils/c2pa.js';
 export * from './utils/feedback-reporter.js';
 export * from './adapters/remote-adapter.js';
 export * from './adapters/nonescape-mini-adapter.js';
+export * from './adapters/sdxl-detector-adapter.js';

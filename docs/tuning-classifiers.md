@@ -167,19 +167,24 @@ registerMlModel({
 });
 ```
 
-### Built-in local adapter for Nonescape mini
+### SDXL Detector (Organika/sdxl-detector)
 
-`@reality-check/core` now includes a bundled `nonescape-mini` model profile inside the extension package. No local service is required.
+`@reality-check/core` uses the [Organika/sdxl-detector](https://huggingface.co/Organika/sdxl-detector) model via the HuggingFace Inference API as the default local ML runner. The model classifies images as `artificial` (AI-generated) or `real` (human photo).
 
 ```ts
-import { registerNonescapeMiniModel } from '@reality-check/core';
+import { registerSdxlDetector } from '@reality-check/core';
 
-registerNonescapeMiniModel(); // bundled model, ready after install
+// No token required for free-tier usage; provide one for higher rate limits
+registerSdxlDetector({ apiToken: 'hf_...' });
 ```
 
-In `high` mode, the bundled model returns a binary local verdict (`AI generated` vs `Not AI generated`) for image samples and sampled video frames.
+The runner encodes the image as a JPEG and POSTs it to the HuggingFace Inference API. The `artificial` label score is used as the local ML signal in the cascade. When canvas encoding is unavailable or the API is unreachable, the runner returns `0.5` (uncertain), allowing the cascade to escalate to remote ML.
 
-For shell-based local model checks (throw images at the bundled model and print the exact response format used by the extension), see:
+The `DetectionPipeline` registers `SdxlDetector` automatically at startup (without an API token — suitable for free-tier inference). You can pass your own token or a custom endpoint by calling `registerSdxlDetector({ apiToken: '...' })` before constructing the pipeline.
+
+In `high` mode, the model returns a calibrated score for image samples and sampled video frames.
+
+For shell-based local model checks (throw images at the model and print the exact response format used by the extension), see:
 
 - `docs/local-model-shell-testing.md`
 
