@@ -27,6 +27,7 @@
  */
 import type { MlModelRunner } from '../types.js';
 import { registerMlModel } from '../detectors/image-detector.js';
+import { createNonescapeMiniRunner } from './nonescape-mini-adapter.js';
 
 export interface SdxlDetectorOptions {
   /** HuggingFace model ID. Defaults to 'Xenova/ai-image-detector'. */
@@ -99,6 +100,9 @@ function classifyFromScore(score: number): number {
 
 export function createSdxlDetectorRunner(options: SdxlDetectorOptions = {}): MlModelRunner {
   const modelId = options.modelId ?? SDXL_MODEL_ID;
+  // Lazily instantiated nonescape-mini fallback — only created if the
+  // Transformers.js model download fails with an auth error (401/403).
+  let fallback: MlModelRunner | null = null;
 
   return {
     async run(data: Uint8ClampedArray, width: number, height: number): Promise<number> {
@@ -124,7 +128,26 @@ export function createSdxlDetectorRunner(options: SdxlDetectorOptions = {}): MlM
         const score = artificial ? Math.max(0, Math.min(1, artificial.score)) : 0.5;
         return classifyFromScore(score);
       } catch (err) {
-        console.error('[RealityCheck] SDXL inference error:', err instanceof Error ? err.message : err);
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[RealityCheck] SDXL inference error:', msg);
+        // Transformers.js hub.js throws these exact messages for HTTP 401 and 403
+        // responses (see ERROR_MAPPING in @huggingface/transformers/src/utils/hub.js).
+        // When the model is gated (requires HuggingFace authentication), degrade
+        // gracefully to the nonescape-mini local scorer rather than returning an
+        // uninformative 0.5.  To restore full ViT accuracy the user must accept
+        // the model terms at https://huggingface.co/Xenova/ai-image-detector.
+        if (
+          msg.includes('Unauthorized access to file') ||
+          msg.includes('Forbidden access to file')
+        ) {
+          console.warn(
+            '[RealityCheck] AI model download blocked (gated model — requires HuggingFace ' +
+              'authentication). Using nonescape-mini fallback. Accept model terms at ' +
+              'https://huggingface.co/Xenova/ai-image-detector to restore full accuracy.',
+          );
+          fallback ??= createNonescapeMiniRunner();
+          return fallback.run(data, width, height);
+        }
         return 0.5;
       }
     },
