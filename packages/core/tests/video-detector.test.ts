@@ -91,10 +91,6 @@ describe('detect() video frame resolution scales with quality', () => {
     await new VideoDetector().detect(video, { remoteEnabled: true, detectionQuality: 'high', remoteClassify });
     high.restore();
 
-    // Filter to canvases that were sized for downscaling (not the tiny FRAME_ANALYSIS_SIZE ones)
-    const lowDownscale = low.canvases.filter(c => c.width === getDownscaleMaxDim('low') || c.width === Math.round(1920 * getDownscaleMaxDim('low') / 1920));
-    const highDownscale = high.canvases.filter(c => c.width === getDownscaleMaxDim('high') || c.width === Math.round(1920 * getDownscaleMaxDim('high') / 1920));
-
     // At minimum, verify canvases were created
     expect(low.canvases.length).toBeGreaterThan(0);
     expect(high.canvases.length).toBeGreaterThan(0);
