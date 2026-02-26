@@ -18,3 +18,4 @@ export * from './utils/feedback-reporter.js';
 export * from './adapters/remote-adapter.js';
 export * from './adapters/nonescape-mini-adapter.js';
 export * from './adapters/onnx-model-adapter.js';
+export * from './adapters/transformersjs-adapter.js';
