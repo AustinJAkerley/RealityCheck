@@ -82,12 +82,61 @@ async function buildLocalClassifier(modelId: string, hfToken?: string): Promise<
         onnxEnv.wasm.numThreads = 1;
       }
 
-      // Transformers.js browser mode intentionally omits Authorization headers
-      // (see getFile() in @huggingface/transformers/src/utils/hub.js).  When
-      // the model is gated on HuggingFace the anonymous fetch returns 401.
-      // Monkey-patch globalThis.fetch to inject the user's HF token for
-      // huggingface.co / hf.co hostnames only; all other fetches are unaffected.
-      if (hfToken) {
+      // Determine whether the model was pre-downloaded at build time and bundled
+      // into the extension's dist/models/ directory.  If so, redirect all
+      // huggingface.co fetch requests to the local extension file, which avoids
+      // the runtime 401 / gated-model auth requirement entirely.
+      //
+      // To pre-download the model:
+      //   node scripts/download-model.mjs   (then rebuild the extension)
+      //
+      // If the local bundle is not present the extension falls back to fetching
+      // from HuggingFace Hub (applying hfToken if supplied).
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const chromeRuntime = (globalThis as any).chrome?.runtime;
+      let localModelBase: string | null = null;
+
+      if (chromeRuntime?.getURL) {
+        const candidate = chromeRuntime.getURL(`models/${modelId}/`);
+        try {
+          const probe = await fetch(`${candidate}config.json`);
+          if (probe.ok) {
+            localModelBase = candidate;
+            console.log('[RealityCheck] Using locally bundled model (offline mode)');
+          }
+        } catch {
+          // local bundle not present — fall through to remote
+        }
+      }
+
+      if (localModelBase) {
+        // Redirect Transformers.js fetches for this model to the local bundle.
+        // Only requests whose URL starts with the HuggingFace path for this model
+        // are redirected; all other fetches (ONNX Runtime WASM CDN etc.) are untouched.
+        const hfModelBase = `https://huggingface.co/${modelId}/resolve/main/`;
+        const localBase = localModelBase; // capture for closure
+        const origFetch = globalThis.fetch.bind(globalThis);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (globalThis as any).fetch = (
+          input: RequestInfo | URL,
+          init?: RequestInit,
+        ): Promise<Response> => {
+          const urlStr = input instanceof Request ? input.url : String(input);
+          if (urlStr.startsWith(hfModelBase)) {
+            // Extract only the path component (strip query params/fragments)
+            // so the local file lookup uses a clean filename like 'onnx/model_quantized.onnx'.
+            let filename = urlStr.slice(hfModelBase.length);
+            const qIdx = filename.indexOf('?');
+            if (qIdx !== -1) filename = filename.slice(0, qIdx);
+            const hashIdx = filename.indexOf('#');
+            if (hashIdx !== -1) filename = filename.slice(0, hashIdx);
+            return origFetch(`${localBase}${filename}`, init);
+          }
+          return origFetch(input, init);
+        };
+      } else if (hfToken) {
+        // No local bundle — inject the HF token so the runtime download can succeed
+        // for gated models (e.g. Xenova/ai-image-detector which requires auth).
         const origFetch = globalThis.fetch.bind(globalThis);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (globalThis as any).fetch = (
@@ -107,8 +156,6 @@ async function buildLocalClassifier(modelId: string, hfToken?: string): Promise<
             // malformed URL — skip injection
           }
           if (isHfUrl) {
-            // Merge headers from both the Request object (if any) and init,
-            // then add the Authorization header.
             const base = input instanceof Request ? input.headers : undefined;
             const headers = new Headers(base);
             if (init?.headers) {
@@ -119,6 +166,12 @@ async function buildLocalClassifier(modelId: string, hfToken?: string): Promise<
           }
           return origFetch(input, init);
         };
+      } else {
+        console.warn(
+          '[RealityCheck] No local model bundle and no HF token. ' +
+          'Run `node scripts/download-model.mjs` to bundle the model at build time, ' +
+          'or set a HuggingFace token in Advanced settings to allow runtime download.',
+        );
       }
 
       console.log('[RealityCheck] Loading SDXL model:', modelId);

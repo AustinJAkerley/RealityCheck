@@ -9,3 +9,5 @@ tmpclaude*
 # Compiled output — should only live in dist/, not src/
 packages/core/src/**/*.js
 packages/core/src/**/*.d.ts
+# Pre-downloaded ML model files (populated by scripts/download-model.mjs)
+extensions/model-cache/
