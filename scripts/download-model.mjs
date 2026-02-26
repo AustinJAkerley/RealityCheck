@@ -79,8 +79,23 @@ async function downloadFile(filename) {
   console.log(`  ✓ ${filename.padEnd(50)} ${sizeMb} MB`);
 }
 
+/**
+ * Returns true if the file is needed for Transformers.js ONNX inference.
+ * Skips PyTorch weights, training metadata, and other files that are not
+ * used at runtime. This keeps the extension bundle small — only the ONNX
+ * model file(s) and config are bundled, not the full 347 MB safetensors.
+ */
+function isNeeded(filename) {
+  // Always include config and preprocessor config
+  if (filename === 'config.json' || filename === 'preprocessor_config.json') return true;
+  // Include everything inside the onnx/ directory (model.onnx, model_quantized.onnx, etc.)
+  if (filename.startsWith('onnx/')) return true;
+  // Skip everything else (model.safetensors, training_args.bin, README.md, etc.)
+  return false;
+}
+
 async function main() {
-  console.log(`\nDownloading ${MODEL_ID} model files…\n`);
+  console.log(`\nDownloading ${MODEL_ID} model files (ONNX inference files only)…\n`);
 
   if (!HF_TOKEN) {
     console.warn('⚠️  HF_TOKEN is not set.');
@@ -102,11 +117,13 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`Found ${files.length} files in ${MODEL_ID}\n`);
+  const needed = files.filter(isNeeded);
+  const skipped = files.length - needed.length;
+  console.log(`Found ${files.length} files in ${MODEL_ID} — downloading ${needed.length} (skipping ${skipped} non-ONNX files)\n`);
 
   await mkdir(MODEL_CACHE_DIR, { recursive: true });
 
-  for (const filename of files) {
+  for (const filename of needed) {
     try {
       await downloadFile(filename);
     } catch (err) {

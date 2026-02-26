@@ -99,16 +99,19 @@ node scripts/download-model.mjs
 
 You should see output like:
 ```
-Downloading Organika/sdxl-detector model files…
+Downloading Organika/sdxl-detector model files (ONNX inference files only)…
 
-Found N files in Organika/sdxl-detector
+Found N files in Organika/sdxl-detector — downloading M (skipping K non-ONNX files)
 
   ✓ config.json                                         0.0 MB
   ✓ preprocessor_config.json                            0.0 MB
+  ✓ onnx/model.onnx                                     ~90 MB
   …
 
 ✅  Model saved to extensions/model-cache/Organika/sdxl-detector/
 ```
+
+> **Already downloaded a previous version?** If you ran the download script before, delete `extensions/model-cache/` and re-run it. The new script only downloads the files Transformers.js needs (skipping the 347 MB `model.safetensors`).
 
 > **You only need to do this once.** The files are saved to `extensions/model-cache/` and are bundled into every extension build automatically. They are excluded from git (`.gitignore`).
 

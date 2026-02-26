@@ -180,7 +180,12 @@ async function buildLocalClassifier(modelId: string, hfToken?: string): Promise<
       // The Transformers.js pipeline() overload for 'image-classification' returns
       // ImageClassificationPipeline, which is callable but typed as a complex union.
       // We cast to our simpler Classifier alias that captures the runtime contract.
-      const p = await (pipeline('image-classification', modelId) as unknown as Promise<Classifier>);
+      //
+      // dtype: 'fp32' forces Transformers.js to load 'onnx/model.onnx' (the plain
+      // fp32 export) rather than defaulting to 'onnx/model_quantized.onnx' (q8).
+      // Organika/sdxl-detector ships model.onnx but not the quantized variant, so
+      // without this option the pipeline throws "Could not locate file: model_quantized.onnx".
+      const p = await (pipeline('image-classification', modelId, { dtype: 'fp32' }) as unknown as Promise<Classifier>);
       console.log('[RealityCheck] SDXL model loaded successfully');
       return p;
     })().catch((err: unknown) => {
