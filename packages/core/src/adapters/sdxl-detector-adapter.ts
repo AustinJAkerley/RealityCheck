@@ -1,76 +1,70 @@
 /**
- * Adapter for the Organika/sdxl-detector model hosted on HuggingFace.
+ * Adapter for the Organika/sdxl-detector model running locally via Transformers.js.
  *
- * This adapter calls the HuggingFace Inference API with a JPEG-encoded image
- * and returns the probability that the image is AI-generated ("artificial").
+ * On first call the model weights (~90 MB) are downloaded from HuggingFace Hub
+ * and cached by the browser. All subsequent inference runs fully offline in
+ * WebAssembly via ONNX Runtime Web — no per-image API call is made.
  *
  * Model: https://huggingface.co/Organika/sdxl-detector
  *
- * The API returns an array of classification labels, e.g.:
+ * The model returns an array of classification labels, e.g.:
  *   [{ "label": "artificial", "score": 0.97 }, { "label": "real", "score": 0.03 }]
  *
  * Usage (extension startup):
  * ```ts
  * import { registerSdxlDetector } from '@reality-check/core';
- * registerSdxlDetector({ apiToken: 'hf_...' });
+ * registerSdxlDetector();
+ * ```
+ *
+ * Custom model ID or test override:
+ * ```ts
+ * registerSdxlDetector({
+ *   modelId: 'my-org/my-sdxl-classifier',
+ *   classifier: async (image) => myClassify(image),
+ * });
  * ```
  */
 import type { MlModelRunner } from '../types.js';
 import { registerMlModel } from '../detectors/image-detector.js';
 
 export interface SdxlDetectorOptions {
-  /** HuggingFace API token. Optional for free-tier usage; required for higher rate limits. */
-  apiToken?: string;
-  /** Custom endpoint override. Defaults to the HuggingFace Inference API. */
-  endpoint?: string;
+  /** HuggingFace model ID. Defaults to 'Organika/sdxl-detector'. */
+  modelId?: string;
   /**
-   * Custom image encoder for testing.
-   * When not provided, the built-in canvas-based JPEG encoder is used.
+   * Custom classifier function for testing or overriding the local pipeline.
+   * When provided, the Transformers.js pipeline is not loaded.
    * @internal
    */
-  imageEncoder?: (
-    data: Uint8ClampedArray,
-    width: number,
-    height: number
-  ) => Promise<ArrayBuffer | null>;
+  classifier?: (image: unknown) => Promise<Array<{ label: string; score: number }>>;
 }
 
-export const SDXL_DETECTOR_ENDPOINT =
-  'https://api-inference.huggingface.co/models/Organika/sdxl-detector';
+export const SDXL_MODEL_ID = 'Organika/sdxl-detector';
 
-/** Expected response shape from the HuggingFace image classification API. */
-type HuggingFaceClassificationResult = Array<{ label: string; score: number }>;
+type ClassificationResult = Array<{ label: string; score: number }>;
+type Classifier = (image: unknown) => Promise<ClassificationResult>;
+
+let cachedClassifierPromise: Promise<Classifier> | null = null;
 
 /**
- * Encode RGBA pixel data as a JPEG byte array using the canvas API.
- * Returns null when the canvas API is unavailable or encoding fails.
+ * Lazily initialises the Transformers.js image-classification pipeline.
+ * The model is downloaded from HuggingFace Hub on the first call and cached
+ * in the browser's Cache API for subsequent offline use.
+ *
+ * Concurrency: the promise is assigned synchronously before any async work
+ * begins, so all concurrent callers receive the same promise and the pipeline
+ * is only built once.
  */
-async function encodeAsJpeg(
-  data: Uint8ClampedArray,
-  width: number,
-  height: number
-): Promise<ArrayBuffer | null> {
-  try {
-    if (typeof document === 'undefined') return null;
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
-    ctx.putImageData(new ImageData(data as unknown as Uint8ClampedArray<ArrayBuffer>, width, height), 0, 0);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-    if (!dataUrl || !dataUrl.includes(',')) return null;
-    const base64 = dataUrl.split(',')[1];
-    if (!base64) return null;
-    const binaryStr = atob(base64);
-    const bytes = new Uint8Array(binaryStr.length);
-    for (let i = 0; i < binaryStr.length; i++) {
-      bytes[i] = binaryStr.charCodeAt(i);
-    }
-    return bytes.length > 0 ? bytes.buffer : null;
-  } catch {
-    return null;
+async function buildLocalClassifier(modelId: string): Promise<Classifier> {
+  if (!cachedClassifierPromise) {
+    cachedClassifierPromise = (async () => {
+      const { pipeline } = await import('@huggingface/transformers');
+      // The Transformers.js pipeline() overload for 'image-classification' returns
+      // ImageClassificationPipeline, which is callable but typed as a complex union.
+      // We cast to our simpler Classifier alias that captures the runtime contract.
+      return pipeline('image-classification', modelId) as unknown as Classifier;
+    })();
   }
+  return cachedClassifierPromise;
 }
 
 function classifyFromScore(score: number): number {
@@ -82,32 +76,26 @@ function classifyFromScore(score: number): number {
 }
 
 export function createSdxlDetectorRunner(options: SdxlDetectorOptions = {}): MlModelRunner {
-  const endpoint = options.endpoint ?? SDXL_DETECTOR_ENDPOINT;
-  const apiToken = options.apiToken ?? '';
-  const encode = options.imageEncoder ?? encodeAsJpeg;
+  const modelId = options.modelId ?? SDXL_MODEL_ID;
 
   return {
     async run(data: Uint8ClampedArray, width: number, height: number): Promise<number> {
       try {
-        const imageBytes = await encode(data, width, height);
-        if (!imageBytes) return 0.5;
+        let image: unknown;
+        let classify: Classifier;
 
-        const headers: Record<string, string> = {
-          'Content-Type': 'image/jpeg',
-        };
-        if (apiToken) {
-          headers['Authorization'] = `Bearer ${apiToken}`;
+        if (options.classifier) {
+          // Test path: injected classifier receives a plain data object; no WASM loaded.
+          classify = options.classifier;
+          image = { data, width, height };
+        } else {
+          // Production path: lazy-load Transformers.js and build a RawImage for the model.
+          const { RawImage } = await import('@huggingface/transformers');
+          classify = await buildLocalClassifier(modelId);
+          image = new RawImage(data, width, height, 4);
         }
 
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers,
-          body: imageBytes,
-        });
-
-        if (!response.ok) return 0.5;
-
-        const results = (await response.json()) as HuggingFaceClassificationResult;
+        const results = await classify(image);
         const artificial = Array.isArray(results)
           ? results.find((r) => r.label === 'artificial')
           : null;
