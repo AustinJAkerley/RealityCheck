@@ -85,15 +85,20 @@ async function build() {
   // Chrome extension service workers need these files to be accessible
   // via chrome.runtime.getURL (set as env.backends.onnx.wasm.wasmPaths
   // in the adapter) so ONNX Runtime can load them without hitting the CDN.
+  // Both the .wasm binary files AND the .mjs JavaScript companion files are
+  // required: ONNX Runtime dynamically imports ort-wasm-simd-threaded.jsep.mjs
+  // at runtime, which then loads the matching .wasm file.
   const ortWasmSrc = path.join(REPO_ROOT, 'node_modules', 'onnxruntime-web', 'dist');
   const ortDist = path.join(DIST, 'ort');
   if (fs.existsSync(ortWasmSrc)) {
     fs.mkdirSync(ortDist, { recursive: true });
-    const wasmFiles = fs.readdirSync(ortWasmSrc).filter(f => f.endsWith('.wasm'));
-    for (const f of wasmFiles) {
+    const ortFiles = fs.readdirSync(ortWasmSrc).filter(
+      f => f.startsWith('ort-wasm-simd-threaded') && (f.endsWith('.wasm') || f.endsWith('.mjs'))
+    );
+    for (const f of ortFiles) {
       fs.copyFileSync(path.join(ortWasmSrc, f), path.join(ortDist, f));
     }
-    console.log(`Bundled ${wasmFiles.length} ONNX Runtime WASM files into dist/ort/`);
+    console.log(`Bundled ${ortFiles.length} ONNX Runtime WASM/JS files into dist/ort/`);
   }
 
   // Bundle local model files if they have been pre-downloaded.
