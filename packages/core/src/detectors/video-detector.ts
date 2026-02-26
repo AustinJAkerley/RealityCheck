@@ -24,7 +24,7 @@ import { DEFAULT_REMOTE_ENDPOINT } from '../types.js';
 import { DetectionCache } from '../utils/cache.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
 import { hashUrl, hashDataUrl } from '../utils/hash.js';
-import { computeVisualAIScore, runMlModelScore } from './image-detector.js';
+import { computeVisualAIScore, runMlModelScore, getDownscaleMaxDim } from './image-detector.js';
 
 const AI_VIDEO_PATTERNS: RegExp[] = [
   /sora\.openai/i,
@@ -193,7 +193,7 @@ async function analyzeVideoFrames(
     if (pixels) framePixels.push(pixels);
     const mlPixels = captureFramePixels(video, mlDims.width, mlDims.height);
     if (mlPixels) mlFramePixels.push(mlPixels);
-    const dataUrl = captureVideoFrame(video);
+    const dataUrl = captureVideoFrame(video, getDownscaleMaxDim(quality ?? 'medium'));
     if (dataUrl) frameDataUrls.push(dataUrl);
   }
 
@@ -288,7 +288,7 @@ export class VideoDetector implements Detector {
       const rl = this.rateLimiters[quality];
       if (rl.consume()) {
         try {
-          const frameDataUrl = video ? captureVideoFrame(video) : null;
+          const frameDataUrl = video ? captureVideoFrame(video, getDownscaleMaxDim(quality)) : null;
           const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
           const apiKey = options.remoteApiKey || '';
           const payload: RemotePayload = {

@@ -640,7 +640,7 @@ export class ImageDetector implements Detector {
       const rl = this.rateLimiters[quality];
       if (rl.consume()) {
         try {
-          const dataUrl = img ? downscaleImage(img) : undefined;
+          const dataUrl = img ? downscaleImage(img, getDownscaleMaxDim(quality)) : undefined;
           const imageHash = hashDataUrl(dataUrl ?? src);
           const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
           const apiKey = options.remoteApiKey || '';

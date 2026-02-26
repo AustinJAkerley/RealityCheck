@@ -641,3 +641,130 @@ describe('ML model registry', () => {
     }
   });
 });
+
+// ── Detection quality resolution ──────────────────────────────────────────────
+
+describe('getDownscaleMaxDim (detection quality resolution)', () => {
+  test('low quality uses the smallest resolution', () => {
+    expect(getDownscaleMaxDim('low')).toBeLessThan(getDownscaleMaxDim('medium'));
+  });
+
+  test('high quality uses the largest resolution', () => {
+    expect(getDownscaleMaxDim('high')).toBeGreaterThan(getDownscaleMaxDim('medium'));
+  });
+
+  test('resolutions are strictly ordered: low < medium < high', () => {
+    const low = getDownscaleMaxDim('low');
+    const medium = getDownscaleMaxDim('medium');
+    const high = getDownscaleMaxDim('high');
+    expect(low).toBeLessThan(medium);
+    expect(medium).toBeLessThan(high);
+  });
+
+  test('all quality tiers return positive integers', () => {
+    for (const q of ['low', 'medium', 'high'] as const) {
+      const dim = getDownscaleMaxDim(q);
+      expect(dim).toBeGreaterThan(0);
+      expect(Number.isInteger(dim)).toBe(true);
+    }
+  });
+
+  test('returns documented dimension values for each quality tier', () => {
+    expect(getDownscaleMaxDim('low')).toBe(64);
+    expect(getDownscaleMaxDim('medium')).toBe(128);
+    expect(getDownscaleMaxDim('high')).toBe(512);
+  });
+});
+
+// ── detect() end-to-end: quality resolution flows to remote classifier ────────
+
+describe('detect() remote image resolution scales with quality', () => {
+  function mockImageElement(width: number, height: number): HTMLImageElement {
+    const img = document.createElement('img');
+    img.src = 'http://localhost/photo.jpg';
+    Object.defineProperty(img, 'naturalWidth', { value: width, configurable: true });
+    Object.defineProperty(img, 'naturalHeight', { value: height, configurable: true });
+    return img;
+  }
+
+  function captureCanvases(): { canvases: HTMLCanvasElement[]; restore: () => void } {
+    const canvases: HTMLCanvasElement[] = [];
+    const realCreate = document.createElement.bind(document);
+    const spy = jest.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      const el = realCreate(tag);
+      if (tag === 'canvas') canvases.push(el as HTMLCanvasElement);
+      return el;
+    });
+    return { canvases, restore: () => spy.mockRestore() };
+  }
+
+  test('high quality creates a larger canvas for remote transmission than low quality', async () => {
+    const remoteClassify = jest.fn().mockResolvedValue({ score: 0.5, label: 'uncertain' });
+    const img = mockImageElement(1024, 1024);
+
+    const low = captureCanvases();
+    await new ImageDetector().detect(img, { remoteEnabled: true, detectionQuality: 'low', remoteClassify });
+    low.restore();
+
+    const high = captureCanvases();
+    await new ImageDetector().detect(img, { remoteEnabled: true, detectionQuality: 'high', remoteClassify });
+    high.restore();
+
+    const lowCanvas = low.canvases[low.canvases.length - 1];
+    const highCanvas = high.canvases[high.canvases.length - 1];
+    expect(lowCanvas).toBeDefined();
+    expect(highCanvas).toBeDefined();
+    expect(highCanvas.width).toBeGreaterThan(lowCanvas.width);
+    expect(highCanvas.height).toBeGreaterThan(lowCanvas.height);
+  });
+
+  test('low quality caps the remote canvas at 64px', async () => {
+    const remoteClassify = jest.fn().mockResolvedValue({ score: 0.5, label: 'uncertain' });
+    const img = mockImageElement(1024, 1024);
+
+    const { canvases, restore } = captureCanvases();
+    await new ImageDetector().detect(img, { remoteEnabled: true, detectionQuality: 'low', remoteClassify });
+    restore();
+
+    const downscaleCanvas = canvases[canvases.length - 1];
+    expect(downscaleCanvas.width).toBe(64);
+    expect(downscaleCanvas.height).toBe(64);
+  });
+
+  test('medium quality caps the remote canvas at 128px', async () => {
+    const remoteClassify = jest.fn().mockResolvedValue({ score: 0.5, label: 'uncertain' });
+    const img = mockImageElement(1024, 1024);
+
+    const { canvases, restore } = captureCanvases();
+    await new ImageDetector().detect(img, { remoteEnabled: true, detectionQuality: 'medium', remoteClassify });
+    restore();
+
+    const downscaleCanvas = canvases[canvases.length - 1];
+    expect(downscaleCanvas.width).toBe(128);
+    expect(downscaleCanvas.height).toBe(128);
+  });
+
+  test('high quality caps the remote canvas at 512px', async () => {
+    const remoteClassify = jest.fn().mockResolvedValue({ score: 0.5, label: 'uncertain' });
+    const img = mockImageElement(1024, 1024);
+
+    const { canvases, restore } = captureCanvases();
+    await new ImageDetector().detect(img, { remoteEnabled: true, detectionQuality: 'high', remoteClassify });
+    restore();
+
+    const downscaleCanvas = canvases[canvases.length - 1];
+    expect(downscaleCanvas.width).toBe(512);
+    expect(downscaleCanvas.height).toBe(512);
+  });
+
+  test('remoteClassify is invoked for all three quality tiers', async () => {
+    const remoteClassify = jest.fn().mockResolvedValue({ score: 0.5, label: 'uncertain' });
+
+    for (const quality of ['low', 'medium', 'high'] as const) {
+      const img = mockImageElement(1024, 1024);
+      await new ImageDetector().detect(img, { remoteEnabled: true, detectionQuality: quality, remoteClassify });
+    }
+
+    expect(remoteClassify).toHaveBeenCalledTimes(3);
+  });
+});
