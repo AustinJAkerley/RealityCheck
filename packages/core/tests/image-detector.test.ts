@@ -228,22 +228,22 @@ describe('visual score blending (scoring math fix)', () => {
     expect(oldCombined).toBeLessThan(0.35); // Was: 0.3 — NOT FLAGGED (bug)
   });
 
-  test('local-only isAIGenerated uses 0.25 threshold', async () => {
+  test('local-only isAIGenerated is not flagged when score is 0', async () => {
     // A string URL that has no CDN match and no pixel data yields score = 0.
-    // score = 0 < 0.25, so should not be flagged.
+    // score = 0 < 0.40 local-only threshold, so should not be flagged.
     const detector = new ImageDetector();
     const opts = { remoteEnabled: false, detectionQuality: 'medium' as const };
     const result = await detector.detect('https://example.com/ordinary-photo.jpg', opts);
     expect(result.source).toBe('local');
-    // score=0 → not flagged even with 0.25 threshold
+    // score=0 → not flagged
     expect(result.isAIGenerated).toBe(false);
     expect(result.score).toBe(0);
   });
 
-  test('local-only CDN match is flagged with new 0.25 threshold', async () => {
+  test('local-only CDN match is flagged (score 0.7 >> 0.40 threshold)', async () => {
     const detector = new ImageDetector();
     const opts = { remoteEnabled: false, detectionQuality: 'medium' as const };
-    // CDN match gives localScore = 0.7, well above both old 0.35 and new 0.25
+    // CDN match gives localScore = 0.7, well above the 0.40 local-only threshold
     const result = await detector.detect('https://midjourney.com/img.png', opts);
     expect(result.isAIGenerated).toBe(true);
     expect(result.score).toBeGreaterThanOrEqual(0.7);

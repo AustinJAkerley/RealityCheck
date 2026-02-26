@@ -384,7 +384,22 @@ function startObserver(): void {
 let mutationDebounce: ReturnType<typeof setTimeout> | null = null;
 
 function startMutationObserver(settings: ExtensionSettings): void {
-  const mutObs = new MutationObserver(() => {
+  const mutObs = new MutationObserver((mutations) => {
+    // Skip mutations caused entirely by our own rc-watermark overlays being
+    // appended/removed from document.body.  Without this guard, every overlay
+    // we add triggers a 500 ms debounced re-scan, creating a feedback loop on
+    // dynamic pages (Facebook, Twitter/X, etc.) that continuously adds content.
+    const isOnlyRcOverlay = mutations.every((m) =>
+      (m.addedNodes.length > 0 || m.removedNodes.length > 0) &&
+      Array.from(m.addedNodes).every(
+        (n) => n instanceof HTMLElement && n.classList.contains('rc-watermark')
+      ) &&
+      Array.from(m.removedNodes).every(
+        (n) => n instanceof HTMLElement && n.classList.contains('rc-watermark')
+      )
+    );
+    if (isOnlyRcOverlay) return;
+
     if (mutationDebounce) clearTimeout(mutationDebounce);
     mutationDebounce = setTimeout(() => {
       // Clean up watermarks for elements no longer in the DOM (SPA navigation, dynamic removal)
