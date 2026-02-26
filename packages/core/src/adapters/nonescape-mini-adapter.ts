@@ -114,22 +114,31 @@ const builtInModels: Record<string, NonescapeModelApi> = {
       const textureUniformityScore = Math.max(0, 1 - features.textureCoV / 2.0);
 
       // Laplacian sparsity (Fridrich & Kodovsky 2012; Matern et al. 2019):
-      // AI: most pixels smooth → sparsity ≈ 0.75–0.95.
-      // Real noisy photos: sensor noise lifts residuals → sparsity ≈ 0.45–0.70.
-      // Score: 0 when sparsity ≤ 0.65, 1 when sparsity ≥ 0.90.
-      const lapSparsityScore = Math.max(0, Math.min(1, (features.laplacianSparsity - 0.65) / 0.25));
+      // AI: sparsity ≈ 0.82–0.95 (smooth diffusion output).
+      // Real photos / downscaled JPEG: sparsity ≈ 0.55–0.78 (residual noise).
+      // Threshold raised from 0.65 → 0.80 so that typical downscaled real
+      // photos (sparsity ≈ 0.65–0.78) do not contribute a positive score.
+      // Score: 0 when sparsity ≤ 0.80, 1 when sparsity ≥ 0.95.
+      const lapSparsityScore = Math.max(0, Math.min(1, (features.laplacianSparsity - 0.80) / 0.15));
 
       // DCT high-frequency score (Gragnaniello 2021): diffusion denoising
       // suppresses high-frequency energy.
-      // dctHighFreqRatio ≈ 0 → AI-like (smooth); ratio ≈ 0.20+ → real-photo-like.
-      // Score: 1 when ratio = 0, 0 when ratio ≥ 0.20.
-      const dctSmoothScore = Math.max(0, 1 - features.dctHighFreqRatio / 0.20);
+      // AI: dctHighFreqRatio ≈ 0–0.05. Real photos (even downscaled): ≈ 0.08–0.25.
+      // Threshold lowered from 0.20 → 0.08 (lower bound for downscaled real
+      // photos) so only genuine AI smoothness (ratio < 0.08) fires this feature.
+      const dctSmoothScore = Math.max(0, 1 - features.dctHighFreqRatio / 0.08);
 
       // ── Logistic regression ──────────────────────────────────────────────────
-      // Bias reduced from -2.80 to -3.60 to account for the new positive
-      // feature contribution.
+      // Bias recalibrated to -6.80 to prevent false positives on typical
+      // downscaled real photos.  Root cause: the noise-sensitive features
+      // (noiseFloor, laplacianSparsity, dctHighFreqRatio) also fire on real
+      // photos that have been downscaled (downscaling removes sensor noise
+      // and JPEG quantisation noise, making real photos look AI-smooth at
+      // small resolutions).  The bias must offset the sum of all features
+      // that fire on typical downscaled real photos (~4.3–5.7) so that the
+      // decision boundary lies between them and clear AI outputs (~5.8–7.2).
       const linear =
-        -3.60 +
+        -6.80 +
         features.meanSat * 2.6 +
         (1 - features.satVar * 8) * 1.2 +
         (1 - Math.abs(features.meanLum - 0.5) * 2) * 0.9 +
