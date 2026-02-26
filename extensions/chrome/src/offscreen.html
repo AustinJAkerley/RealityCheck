@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<!--
+  Offscreen document for RealityCheck Chrome Extension.
+
+  Chrome MV3 service workers cannot run dynamic import() or WASM, so ONNX
+  Runtime (used by Transformers.js) cannot initialise there.  This invisible
+  offscreen page provides a full DOM context where WASM + dynamic import()
+  work normally.  The background service worker forwards SDXL_CLASSIFY
+  messages here for inference.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>RealityCheck Offscreen</title></head>
+<body>
+  <script src="offscreen.js" type="module"></script>
+</body>
+</html>

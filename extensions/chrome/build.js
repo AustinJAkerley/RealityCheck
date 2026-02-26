@@ -49,6 +49,14 @@ async function build() {
       entryPoints: [path.join(ROOT, 'src', 'background.ts')],
       outfile: path.join(DIST, 'background.js'),
     }),
+    // Offscreen document — hosts Transformers.js / ONNX Runtime WASM inference.
+    // Service workers cannot run dynamic import() or WASM, so inference is
+    // delegated to this invisible extension page.
+    esbuild.build({
+      ...shared,
+      entryPoints: [path.join(ROOT, 'src', 'offscreen.ts')],
+      outfile: path.join(DIST, 'offscreen.js'),
+    }),
     esbuild.build({
       ...shared,
       entryPoints: [path.join(ROOT, 'src', 'content.ts')],
@@ -63,6 +71,10 @@ async function build() {
 
   // Copy static assets
   fs.copyFileSync(path.join(ROOT, 'manifest.json'), path.join(DIST, 'manifest.json'));
+  fs.copyFileSync(
+    path.join(ROOT, 'src', 'offscreen.html'),
+    path.join(DIST, 'offscreen.html')
+  );
   fs.copyFileSync(
     path.join(ROOT, 'src', 'popup', 'popup.html'),
     path.join(DIST, 'popup', 'popup.html')

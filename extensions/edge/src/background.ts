@@ -9,14 +9,46 @@
  * - Route remote ML calls (REMOTE_CLASSIFY) — bypasses CORS restrictions
  */
 
-import { SettingsStorage, DEFAULT_SETTINGS, ExtensionSettings, createRemoteAdapter, createSdxlDetectorRunner, MlModelRunner } from '@reality-check/core';
+import { SettingsStorage, DEFAULT_SETTINGS, ExtensionSettings, createRemoteAdapter } from '@reality-check/core';
 import type { ContentType, RemotePayload } from '@reality-check/core';
 
 const storage = new SettingsStorage();
 
-// Lazy-initialised SDXL runner — Transformers.js / ONNX Runtime runs in this
-// ES module service worker context where import.meta.url is valid.
-let sdxlRunner: MlModelRunner | null = null;
+// ---------------------------------------------------------------------------
+// Offscreen document helpers — WASM / ONNX Runtime cannot run inside a
+// Chromium MV3 service worker (dynamic import() is disallowed).  We create an
+// offscreen document that hosts Transformers.js and forward SDXL_CLASSIFY
+// messages to it.
+// ---------------------------------------------------------------------------
+const OFFSCREEN_URL = 'offscreen.html';
+let creatingOffscreen: Promise<void> | null = null;
+
+async function ensureOffscreenDocument(): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const offscreen = (chrome as any).offscreen;
+  if (!offscreen) {
+    throw new Error('chrome.offscreen API not available — requires Edge 109+');
+  }
+
+  if (await offscreen.hasDocument?.()) return;
+
+  if (creatingOffscreen) {
+    await creatingOffscreen;
+    return;
+  }
+
+  creatingOffscreen = offscreen.createDocument({
+    url: OFFSCREEN_URL,
+    reasons: [offscreen.Reason?.DOM_SCRAPING ?? 'DOM_SCRAPING'],
+    justification: 'Run ONNX Runtime WASM inference for AI image classification',
+  });
+
+  try {
+    await creatingOffscreen;
+  } finally {
+    creatingOffscreen = null;
+  }
+}
 
 // Ensure default settings exist on install
 chrome.runtime.onInstalled.addListener(async () => {
@@ -42,9 +74,8 @@ chrome.runtime.onMessage.addListener(
       storage
         .save(newSettings)
         .then(() => {
-          // Reset the SDXL runner so it picks up any new hfToken on the next call.
-          sdxlRunner = null;
-          // Broadcast updated settings to all tabs
+          // Broadcast updated settings to all tabs (the offscreen document also
+          // listens for SAVE_SETTINGS and resets its runner automatically).
           chrome.tabs.query({}, (tabs) => {
             for (const tab of tabs) {
               if (tab.id !== undefined) {
@@ -70,23 +101,17 @@ chrome.runtime.onMessage.addListener(
     }
 
     if (message.type === 'SDXL_CLASSIFY') {
-      // Run the Organika/sdxl-detector model in this ES module service worker.
-      // Content scripts can't load WASM (import.meta.url fails in classic scripts).
-      const { data, width, height } = message.payload as {
-        data: Uint8ClampedArray;
-        width: number;
-        height: number;
-      };
-      // Load settings on first use so the hfToken is available for the model download.
-      (sdxlRunner
-        ? Promise.resolve(sdxlRunner)
-        : storage.load().then((s) => {
-            sdxlRunner = createSdxlDetectorRunner({ hfToken: s.hfToken || undefined });
-            return sdxlRunner;
-          })
-      )
-        .then((runner) => runner.run(data, width, height))
-        .then((score) => {
+      // Forward to the offscreen document where WASM / dynamic import() are allowed.
+      ensureOffscreenDocument()
+        .then(() =>
+          chrome.runtime.sendMessage({
+            type: 'OFFSCREEN_SDXL_CLASSIFY',
+            payload: message.payload,
+          }),
+        )
+        .then((response) => {
+          const res = response as { ok: boolean; score: number } | undefined;
+          const score = res?.ok && typeof res.score === 'number' ? res.score : 0.5;
           console.log('[RealityCheck] SDXL_CLASSIFY score:', score);
           sendResponse({ ok: true, score });
         })
