@@ -25,7 +25,7 @@ import { DEFAULT_REMOTE_ENDPOINT } from '../types.js';
 import { DetectionCache } from '../utils/cache.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
 import { hashUrl, hashDataUrl } from '../utils/hash.js';
-import { computeVisualAIScore, runMlModelScore } from './image-detector.js';
+import { computeVisualAIScore, runMlModelScore, getDownscaleMaxDim } from './image-detector.js';
 
 const AI_VIDEO_PATTERNS: RegExp[] = [
   /sora\.openai/i,
@@ -226,7 +226,7 @@ async function analyzeVideoFrames(
     if (pixels) framePixels.push(pixels);
     const mlPixels = captureFramePixels(video, mlDims.width, mlDims.height);
     if (mlPixels) mlFramePixels.push(mlPixels);
-    const dataUrl = captureVideoFrame(video);
+    const dataUrl = captureVideoFrame(video, getDownscaleMaxDim(quality ?? 'medium'));
     if (dataUrl) frameDataUrls.push(dataUrl);
   }
 
@@ -321,7 +321,7 @@ export class VideoDetector implements Detector {
       const rl = this.rateLimiters[quality];
       if (rl.consume()) {
         try {
-          const frameDataUrl = video ? captureVideoFrame(video) : null;
+          const frameDataUrl = video ? captureVideoFrame(video, getDownscaleMaxDim(quality)) : null;
           const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
           const apiKey = options.remoteApiKey || '';
           const payload: RemotePayload = {
@@ -456,17 +456,13 @@ export class VideoDetector implements Detector {
       const rl = this.rateLimiters[quality];
       if (rl.consume()) {
         try {
-          const remoteFrameCount = REMOTE_FRAME_COUNTS[quality];
-          const remoteFrames = await captureFramesForRemote(video, remoteFrameCount);
-          // Fall back to a locally-captured frame if no remote frames were obtained
-          // (e.g. video not yet loaded or cross-origin).
-          const fallbackFrame =
-            remoteFrames.length === 0
-              ? (capturedFrames.length > 0 ? capturedFrames[0] : captureVideoFrame(video))
-              : null;
-          const primaryFrame = remoteFrames.length > 0 ? remoteFrames[0] : fallbackFrame;
-          if (primaryFrame) {
-            const imageHash = hashDataUrl(primaryFrame);
+          // Prefer frames from multi-frame analysis; fall back to a fresh single-frame
+          // capture only when multi-frame analysis returned no frames (e.g. video not
+          // yet loaded, zero dimensions). Both paths can return null on cross-origin.
+          const frameDataUrl =
+            capturedFrames.length > 0 ? capturedFrames[0] : captureVideoFrame(video, getDownscaleMaxDim(quality));
+          if (frameDataUrl) {
+            const imageHash = hashDataUrl(frameDataUrl);
             const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
             const apiKey = options.remoteApiKey || '';
             const payload: RemotePayload = {
