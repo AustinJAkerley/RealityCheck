@@ -302,7 +302,19 @@ async function init(): Promise<void> {
   const sel = selParts.join(', ');
   document.querySelectorAll<HTMLElement>(sel).forEach((el) => observer.observe(el));
 
-  new MutationObserver(() => {
+  new MutationObserver((mutations) => {
+    // Skip mutations caused entirely by our own rc-watermark overlays.
+    const isOnlyRcOverlay = mutations.every((m) =>
+      (m.addedNodes.length > 0 || m.removedNodes.length > 0) &&
+      Array.from(m.addedNodes).every(
+        (n) => n instanceof HTMLElement && n.classList.contains('rc-watermark')
+      ) &&
+      Array.from(m.removedNodes).every(
+        (n) => n instanceof HTMLElement && n.classList.contains('rc-watermark')
+      )
+    );
+    if (isOnlyRcOverlay) return;
+
     if (mutDebounce) clearTimeout(mutDebounce);
     mutDebounce = setTimeout(() => {
       // Clean up watermarks for elements no longer in the DOM (SPA navigation, dynamic removal)

@@ -404,7 +404,12 @@ export function applyNotAIWatermark(
 
 /**
  * Apply inline text highlighting to a paragraph or block element.
- * Wraps the inner text in a highlighted span with a badge and tooltip.
+ *
+ * Non-destructive: adds a CSS class and appends a small badge element rather
+ * than replacing innerHTML.  Replacing innerHTML on React/Vue/Angular-managed
+ * nodes destroys framework state, which can cause page jumps and layout shifts
+ * on sites like Facebook.  The class+append approach leaves the existing DOM
+ * tree (and any framework state) intact.
  */
 export function applyTextWatermark(
   element: HTMLElement,
@@ -415,28 +420,23 @@ export function applyTextWatermark(
 
   const tooltip = `Likely AI-generated text. ${confidenceLabel(confidence)}. This is a probabilistic estimate and may be incorrect.`;
 
-  const originalContent = element.innerHTML;
-  const span = document.createElement('span');
-  span.className = 'rc-text-highlight';
-  span.title = tooltip;
-  span.innerHTML = element.innerHTML;
+  element.classList.add('rc-text-highlight');
+  element.title = tooltip;
 
   const badge = document.createElement('span');
   badge.className = 'rc-text-badge';
   badge.title = tooltip;
   badge.textContent = '~AI';
-
-  element.innerHTML = '';
-  element.appendChild(span);
   element.appendChild(badge);
 
   return {
     remove() {
-      element.innerHTML = originalContent;
+      element.classList.remove('rc-text-highlight');
+      element.removeAttribute('title');
+      badge.remove();
     },
     update(_newConfig: WatermarkConfig) {
-      element.innerHTML = originalContent;
-      applyTextWatermark(element, confidence, _newConfig);
+      // Text watermark appearance does not depend on WatermarkConfig.
     },
   };
 }
