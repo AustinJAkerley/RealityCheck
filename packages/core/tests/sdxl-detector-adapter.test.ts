@@ -1,6 +1,8 @@
 import {
   createSdxlDetectorRunner,
+  createSdxlDetectorProxyRunner,
   registerSdxlDetector,
+  registerSdxlDetectorProxy,
   SDXL_MODEL_ID,
 } from '../src/adapters/sdxl-detector-adapter';
 import { isMlModelAvailable } from '../src/detectors/image-detector';
@@ -89,6 +91,78 @@ describe('registerSdxlDetector', () => {
     registerSdxlDetector({
       classifier: mockClassifier([{ label: 'artificial', score: 0.5 }]),
     });
+    expect(isMlModelAvailable()).toBe(true);
+  });
+});
+
+describe('SDXL Detector proxy runner (content-script path)', () => {
+  const pixels = new Uint8ClampedArray([100, 150, 200, 255]);
+
+  afterEach(() => {
+    // Remove the chrome mock after each test to avoid cross-test pollution.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    delete (globalThis as any).chrome;
+  });
+
+  function mockChrome(response: unknown) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).chrome = {
+      runtime: {
+        sendMessage: jest.fn().mockResolvedValue(response),
+      },
+    };
+  }
+
+  test('returns the score from background response', async () => {
+    mockChrome({ ok: true, score: 0.82 });
+    const runner = createSdxlDetectorProxyRunner();
+    const score = await runner.run(pixels, 1, 1);
+    expect(score).toBeCloseTo(0.82, 5);
+  });
+
+  test('sends SDXL_CLASSIFY message with pixel data, width, height', async () => {
+    mockChrome({ ok: true, score: 0.7 });
+    const runner = createSdxlDetectorProxyRunner();
+    await runner.run(pixels, 1, 1);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sendMessage = (globalThis as any).chrome.runtime.sendMessage as jest.Mock;
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const msg = sendMessage.mock.calls[0][0];
+    expect(msg.type).toBe('SDXL_CLASSIFY');
+    expect(msg.payload.data).toBe(pixels);
+    expect(msg.payload.width).toBe(1);
+    expect(msg.payload.height).toBe(1);
+  });
+
+  test('returns 0.5 when background responds with ok: false', async () => {
+    mockChrome({ ok: false, score: 0 });
+    const runner = createSdxlDetectorProxyRunner();
+    const score = await runner.run(pixels, 1, 1);
+    expect(score).toBe(0.5);
+  });
+
+  test('returns 0.5 when sendMessage rejects', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).chrome = {
+      runtime: {
+        sendMessage: jest.fn().mockRejectedValue(new Error('Extension context invalidated')),
+      },
+    };
+    const runner = createSdxlDetectorProxyRunner();
+    const score = await runner.run(pixels, 1, 1);
+    expect(score).toBe(0.5);
+  });
+
+  test('returns 0.5 when chrome runtime is not available (non-extension context)', async () => {
+    // No chrome global set — simulates a plain browser page / unit test environment.
+    const runner = createSdxlDetectorProxyRunner();
+    const score = await runner.run(pixels, 1, 1);
+    expect(score).toBe(0.5);
+  });
+
+  test('registerSdxlDetectorProxy registers a runner so isMlModelAvailable() returns true', () => {
+    registerSdxlDetectorProxy();
     expect(isMlModelAvailable()).toBe(true);
   });
 });

@@ -14,18 +14,27 @@ RealityCheck is a cross-browser extension that detects likely AI-generated conte
 ┌────────────────────────────────────────────────────────────────┐
 │  Browser (Chrome / Edge / Firefox)                             │
 │                                                                │
-│  ┌──────────────────┐    messages    ┌─────────────────────┐  │
-│  │  Background SW   │◄──────────────►│  Popup UI           │  │
-│  │  (settings sync) │                │  (settings, report) │  │
-│  └────────┬─────────┘                └─────────────────────┘  │
-│           │ SETTINGS_UPDATED                                   │
-│           ▼                                                    │
+│  ┌──────────────────────────────────┐    ┌──────────────────┐  │
+│  │  Background Service Worker       │◄──►│  Popup UI        │  │
+│  │  (ES module — "type": "module")  │    │  (settings,      │  │
+│  │                                  │    │   report)        │  │
+│  │  • Settings sync                 │    └──────────────────┘  │
+│  │  • SDXL_CLASSIFY handler         │                          │
+│  │    └─ createSdxlDetectorRunner() │                          │
+│  │       Organika/sdxl-detector     │                          │
+│  │       (Transformers.js + ONNX)   │                          │
+│  │  • REMOTE_CLASSIFY handler       │                          │
+│  │    └─ fetch → Azure API          │                          │
+│  └────────────┬─────────────────────┘                          │
+│               │ SETTINGS_UPDATED / SDXL_CLASSIFY / REMOTE_CLASSIFY │
+│               ▼                                                │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  Content Script                                          │  │
+│  │  Content Script  (classic script — no import.meta)       │  │
 │  │  ┌──────────────────────────────────────────────────┐   │  │
 │  │  │  DetectionPipeline                               │   │  │
 │  │  │  ├── TextDetector  (local heuristics + remote)   │   │  │
-│  │  │  ├── ImageDetector (metadata + remote)           │   │  │
+│  │  │  ├── ImageDetector (metadata + heuristics +      │   │  │
+│  │  │  │     nonescape-mini + SDXL proxy runner)       │   │  │
 │  │  │  └── VideoDetector (frame sample + remote)       │   │  │
 │  │  └──────────────────────────────────────────────────┘   │  │
 │  │  ┌──────────────────────────────────────────────────┐   │  │
@@ -47,6 +56,49 @@ RealityCheck is a cross-browser extension that detects likely AI-generated conte
   │  GET  /health  (Azure liveness probe)                   │
   └─────────────────────────────────────────────────────────┘
 ```
+
+### Why SDXL inference runs in the background service worker
+
+Chrome extension content scripts are always loaded as **classic scripts**, even
+when bundled as ESM.  `@huggingface/transformers` (Transformers.js) uses
+`import.meta.url` internally to locate ONNX Runtime WASM files — this throws a
+parse-time `SyntaxError: Cannot use 'import.meta' outside a module` in a
+classic-script context and breaks the entire content script.
+
+The background service worker is declared as `"type": "module"` in the
+manifest, so `import.meta.url` is valid there.  Content scripts therefore use a
+lightweight **proxy runner** (`createSdxlDetectorProxyRunner`) that sends the
+image pixel data to the background via the `SDXL_CLASSIFY` message, following
+the same pattern already used by `REMOTE_CLASSIFY`.
+
+**Result:**
+
+| Bundle | Size | Notes |
+|--------|------|-------|
+| `content.js` | ~73 KB | Zero `import.meta` references; `@huggingface/transformers` fully tree-shaken out |
+| `background.js` | ~2.2 MB | Transformers.js + ONNX Runtime WASM live here; valid ES module context |
+
+### Where the model lives
+
+`Organika/sdxl-detector` is a Vision Transformer (ViT) fine-tuned to classify
+images as `"artificial"` (AI-generated) or `"real"` (photographic).
+
+* **Source**: `https://huggingface.co/Organika/sdxl-detector`
+* **Download**: ~90 MB ONNX weights, fetched from HuggingFace Hub on the
+  **first use** only.  The download is initiated by the background service
+  worker inside `buildLocalClassifier()` (see
+  `packages/core/src/adapters/sdxl-detector-adapter.ts`).
+* **Cache**: The browser's **Cache API** (same storage used by service workers)
+  retains the weights between browser sessions.  After the one-time download,
+  all inference runs **fully offline** — no per-image network call is made.
+* **Inference runtime**: ONNX Runtime Web (WebAssembly backend), loaded via
+  Transformers.js v3.  The pipeline is initialised lazily on the first
+  `SDXL_CLASSIFY` request and reused for all subsequent calls
+  (`cachedClassifierPromise` module singleton).
+* **Firefox**: Returns a neutral score of `0.5` for `SDXL_CLASSIFY` because
+  Firefox uses a Manifest V2 IIFE background page, which cannot run
+  WebAssembly in the same way.  Heuristic and remote classification remain
+  fully active on Firefox.
 
 ---
 
@@ -92,15 +144,17 @@ All browser wrappers import from `@reality-check/core`. The core is pure TypeScr
 |---|---|
 | `types.ts` | All shared TypeScript types and interfaces |
 | `detectors/text-detector.ts` | Local heuristic + remote text classification |
-| `detectors/image-detector.ts` | URL/dimension heuristics + remote image classification |
+| `detectors/image-detector.ts` | URL/dimension heuristics + ML model + remote image classification |
 | `detectors/video-detector.ts` | URL heuristics + frame sampling + remote |
-| `pipeline/detection-pipeline.ts` | Orchestrates detectors; pluggable via `registerDetector` |
+| `pipeline/detection-pipeline.ts` | Orchestrates detectors; pluggable via `registerDetector`; registers SDXL proxy runner |
 | `overlay/watermark-overlay.ts` | CSS-animated overlays for media and text |
 | `storage/settings-storage.ts` | Extension storage abstraction (chrome/browser/localStorage) |
 | `utils/cache.ts` | LRU-like in-memory result cache |
 | `utils/rate-limiter.ts` | Token-bucket rate limiter for remote calls |
 | `utils/hash.ts` | Lightweight djb2 hash for cache keys |
 | `adapters/remote-adapter.ts` | Pluggable remote provider (OpenAI, Generic HTTP) |
+| `adapters/sdxl-detector-adapter.ts` | Local ViT inference via Transformers.js (background) + proxy runner (content script) |
+| `adapters/nonescape-mini-adapter.ts` | Zero-config pixel-statistics heuristic; retained as fallback |
 
 ---
 
@@ -129,12 +183,31 @@ All browser wrappers import from `@reality-check/core`. The core is pure TypeScr
 - **Power-of-two dimensions**: AI image generators typically produce 512×512, 1024×1024, etc.
 - **Aspect ratio**: Standard AI output ratios (1:1, 4:3, 16:9)
 
-**Limitations**: These heuristics are trivially evaded by resaving or cropping images. Pixel-level detection requires a dedicated model (e.g., CNNDetect, UnivFD). The remote classifier path is the recommended route for higher accuracy.
+**Local ML model (Organika/sdxl-detector):**
+
+The primary local classifier is a Vision Transformer (ViT-B/16) fine-tuned on
+SDXL-generated versus real photographs. It runs via Transformers.js + ONNX
+Runtime Web (WebAssembly) in the background service worker — see the [Why SDXL
+inference runs in the background service worker](#why-sdxl-inference-runs-in-the-background-service-worker)
+section above for the technical rationale.
+
+- Model: `Organika/sdxl-detector` (HuggingFace Hub)
+- Weights: ~90 MB ONNX, downloaded once and cached in the browser's Cache API
+- Output: `"artificial"` score ∈ [0, 1] (calibrated away from hard binary edges)
+- Content scripts communicate with the background via `SDXL_CLASSIFY` messages
+- `nonescape-mini` pixel-statistics heuristic is retained as a lightweight fallback
+
+**Limitations**: ViT-based models are strong on images close to their training
+distribution (SDXL / Stable Diffusion) but may miss images from other generators
+(Midjourney, DALL-E 3). The remote classifier path handles out-of-distribution
+cases. Pixel-level CNN detectors (CNNDetect, UnivFD) may complement ViT
+approaches for broader coverage.
 
 **References**:
 - Wang et al., "CNN-generated images are surprisingly easy to spot… for now" (2020)
 - C2PA Content Credentials — https://c2pa.org (open standard for provenance metadata)
 - Sha et al., "DE-FAKE: Detection and Attribution of Fake Images" (2023)
+- Organika/sdxl-detector — https://huggingface.co/Organika/sdxl-detector
 
 ### Video detection
 
