@@ -1,7 +1,7 @@
 /**
  * @jest-environment jsdom
  */
-import { registerMlModel } from '../src/detectors/image-detector';
+import { registerMlModel, getDownscaleMaxDim } from '../src/detectors/image-detector';
 import { VideoDetector } from '../src/detectors/video-detector';
 
 const opts = { remoteEnabled: false, detectionQuality: 'high' as const };
@@ -95,5 +95,65 @@ describe('VideoDetector', () => {
     // that runMlModelScore was called FRAME_COUNT times.
     expect(result.score).toBeGreaterThanOrEqual(0);
     expect(result.score).toBeLessThanOrEqual(1);
+  });
+});
+
+// ── Video frame resolution scales with quality ────────────────────────────────
+
+describe('detect() video frame resolution scales with quality', () => {
+  function mockVideoElement(width: number, height: number): HTMLVideoElement {
+    const video = document.createElement('video');
+    video.src = 'http://localhost/video.mp4';
+    Object.defineProperty(video, 'videoWidth', { value: width, configurable: true });
+    Object.defineProperty(video, 'videoHeight', { value: height, configurable: true });
+    Object.defineProperty(video, 'duration', { value: 10, configurable: true });
+    Object.defineProperty(video, 'currentSrc', { value: 'http://localhost/video.mp4', configurable: true });
+    let _ct = 0;
+    Object.defineProperty(video, 'currentTime', {
+      get() { return _ct; },
+      set(v: number) {
+        _ct = v;
+        setTimeout(() => video.dispatchEvent(new Event('seeked')), 0);
+      },
+      configurable: true,
+    });
+    return video;
+  }
+
+  function captureCanvases(): { canvases: HTMLCanvasElement[]; restore: () => void } {
+    const canvases: HTMLCanvasElement[] = [];
+    const realCreate = document.createElement.bind(document);
+    const spy = jest.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      const el = realCreate(tag);
+      if (tag === 'canvas') canvases.push(el as HTMLCanvasElement);
+      return el;
+    });
+    return { canvases, restore: () => spy.mockRestore() };
+  }
+
+  test('high quality creates a larger canvas for frame capture than low quality', async () => {
+    const remoteClassify = jest.fn().mockResolvedValue({ score: 0.5, label: 'uncertain' });
+    const video = mockVideoElement(1920, 1080);
+
+    const low = captureCanvases();
+    await new VideoDetector().detect(video, { remoteEnabled: true, detectionQuality: 'low', remoteClassify });
+    low.restore();
+
+    const high = captureCanvases();
+    await new VideoDetector().detect(video, { remoteEnabled: true, detectionQuality: 'high', remoteClassify });
+    high.restore();
+
+    expect(low.canvases.length).toBeGreaterThan(0);
+    expect(high.canvases.length).toBeGreaterThan(0);
+
+    const lowMaxWidth = Math.max(...low.canvases.map(c => c.width));
+    const highMaxWidth = Math.max(...high.canvases.map(c => c.width));
+    expect(highMaxWidth).toBeGreaterThan(lowMaxWidth);
+  });
+
+  test('getDownscaleMaxDim values are shared between image and video detectors', () => {
+    expect(getDownscaleMaxDim('low')).toBe(64);
+    expect(getDownscaleMaxDim('medium')).toBe(128);
+    expect(getDownscaleMaxDim('high')).toBe(512);
   });
 });

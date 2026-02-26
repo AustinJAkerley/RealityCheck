@@ -115,7 +115,41 @@ const AI_THRESHOLD = 0.40;
 const UNCERTAIN_MIN = 0.25;
 const UNCERTAIN_MAX = 0.75;
 
-// ── ImageDetector ────────────────────────────────────────────────────────────
+/**
+ * Returns the maximum image dimension (in pixels) used when downscaling for
+ * remote transmission, based on the requested detection quality tier.
+ *
+ * - low:    64 px — fastest; minimal bandwidth usage
+ * - medium: 128 px — balanced default
+ * - high:   512 px — highest fidelity for the remote classifier
+ */
+export function getDownscaleMaxDim(quality: DetectionQuality): number {
+  if (quality === 'high') return 512;
+  if (quality === 'medium') return 128;
+  return 64; // low
+}
+
+/**
+ * Downscale an HTMLImageElement for remote transmission.
+ * Returns null for cross-origin images (would taint the canvas).
+ */
+function downscaleImage(img: HTMLImageElement, maxDim = 128): string | null {
+  if (wouldTaintCanvas(img)) return null;
+  try {
+    const canvas = document.createElement('canvas');
+    const scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
+    canvas.width = Math.round(img.naturalWidth * scale);
+    canvas.height = Math.round(img.naturalHeight * scale);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', 0.7);
+  } catch {
+    return null;
+  }
+}
+
+// ── Detector class ───────────────────────────────────────────────────────────
 
 export class ImageDetector implements Detector {
   readonly contentType = 'image' as const;
@@ -138,8 +172,39 @@ export class ImageDetector implements Detector {
     const cached = this.cache.get(cacheKey);
     if (cached) return cached;
 
-    const quality = options.detectionQuality ?? 'high';
-    const maxDim = getDownscaleMaxDim(quality);
+    // Remote-enabled mode: rely solely on remote classification.
+    if (options.remoteEnabled) {
+      let finalScore = 0;
+      let details = 'Remote-only mode enabled';
+      const heuristicScores: Record<string, number> = {};
+      const rl = this.rateLimiters[quality];
+      if (rl.consume()) {
+        try {
+          const dataUrl = img ? downscaleImage(img, getDownscaleMaxDim(quality)) : undefined;
+          const imageHash = hashDataUrl(dataUrl ?? src);
+          const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
+          const apiKey = options.remoteApiKey || '';
+          const payload: RemotePayload = {
+            imageHash,
+            imageDataUrl: dataUrl ?? undefined,
+            imageUrl: dataUrl ? undefined : src,
+          };
+          if (!options.remoteClassify) {
+            throw new Error('remoteClassify callback is required when remoteEnabled is true');
+          }
+          const remote = await options.remoteClassify(endpoint, apiKey, 'image', payload);
+          finalScore = remote.label === 'error' ? 0 : remote.score;
+          heuristicScores.remote = finalScore;
+          details =
+            remote.label === 'error'
+              ? 'Remote-only mode: remote classification returned error'
+              : `Remote-only mode: remote score ${remote.score.toFixed(2)}`;
+        } catch (err) {
+          rl.returnToken();
+          details = `Remote-only mode failed: ${err instanceof Error ? err.message : 'unknown error'}`;
+          console.warn('[RealityCheck] Remote image classification failed:', err instanceof Error ? err.message : err);
+        }
+      }
 
     // Step 1: Run SDXL local model
     const imageData = src ? await loadImageData(src, maxDim) : null;
@@ -161,6 +226,8 @@ export class ImageDetector implements Detector {
       const rl = this.rateLimiters[quality];
       if (rl.consume()) {
         try {
+          const dataUrl = downscaleImage(img, getDownscaleMaxDim(quality));
+          const imageHash = hashDataUrl(dataUrl ?? src);
           const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
           const apiKey = options.remoteApiKey || '';
           const payload: RemotePayload = {

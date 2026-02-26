@@ -1,7 +1,20 @@
 /**
  * @jest-environment jsdom
  */
-import { registerMlModel, isMlModelAvailable, runMlModelScore, ImageDetector } from '../src/detectors/image-detector';
+import {
+  computeLocalImageScore,
+  computeVisualAIScore,
+  countUniqueColors,
+  computeChannelEntropy,
+  computeEdgeComplexity,
+  computeBlockVariance,
+  computeSaturationVariance,
+  scoreLowTier,
+  scoreMediumTier,
+  runPhotorealismPreFilter,
+  getDownscaleMaxDim,
+} from '../src/detectors/image-detector';
+import { ImageDetector } from '../src/detectors/image-detector';
 
 const opts = { remoteEnabled: false, detectionQuality: 'high' as const };
 
