@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Downloads the Xenova/ai-image-detector model files from HuggingFace Hub
+ * Downloads the Organika/sdxl-detector model files from HuggingFace Hub
  * for local bundling with the browser extension.
  *
  * Run this ONCE before building (after `npm install`):
@@ -12,12 +12,16 @@
  *   HF_TOKEN=hf_xxx node scripts/download-model.mjs
  *   node scripts/download-model.mjs --token hf_xxx
  *
- * Files are saved to: extensions/model-cache/Xenova/ai-image-detector/
+ * Files are saved to: extensions/model-cache/Organika/sdxl-detector/
  * The extension build script (build.js) copies them into dist/models/ automatically.
  *
  * After downloading, rebuild the extension:
  *   make build-chrome              # Linux/macOS
  *   .\scripts\build.ps1 chrome    # Windows PowerShell
+ *
+ * NOTE: Transformers.js requires ONNX model files (onnx/model_quantized.onnx) for
+ * browser inference. If the downloaded model does not include ONNX files, local
+ * inference will not work and the extension will fall back to returning 0.5 (unknown).
  */
 
 import { mkdir, writeFile } from 'fs/promises';
@@ -28,8 +32,8 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
 
-const MODEL_ID = 'Xenova/ai-image-detector';
-const MODEL_CACHE_DIR = path.join(REPO_ROOT, 'extensions', 'model-cache', 'Xenova', 'ai-image-detector');
+const MODEL_ID = 'Organika/sdxl-detector';
+const MODEL_CACHE_DIR = path.join(REPO_ROOT, 'extensions', 'model-cache', 'Organika', 'sdxl-detector');
 const HF_BASE = 'https://huggingface.co';
 
 // --- Token resolution ---
@@ -91,7 +95,7 @@ async function main() {
     console.error('Failed to list model files:', err.message);
     if (!HF_TOKEN) {
       console.error('\n→ Try again with a HuggingFace token:');
-      console.error('  1. Go to https://huggingface.co/Xenova/ai-image-detector and accept model terms');
+      console.error('  1. Go to https://huggingface.co/Organika/sdxl-detector and accept model terms (if required)');
       console.error('  2. Go to https://huggingface.co/settings/tokens and create a read token');
       console.error('  3. Run: HF_TOKEN=hf_xxx node scripts/download-model.mjs');
     }
@@ -111,7 +115,7 @@ async function main() {
     }
   }
 
-  console.log(`\n✅  Model saved to extensions/model-cache/Xenova/ai-image-detector/`);
+  console.log(`\n✅  Model saved to extensions/model-cache/Organika/sdxl-detector/`);
   console.log('\nNext step — rebuild the extension to bundle the model:');
   console.log('  make build-chrome              (Linux/macOS)');
   console.log('  .\\scripts\\build.ps1 chrome   (Windows PowerShell)\n');

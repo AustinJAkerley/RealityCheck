@@ -14,7 +14,7 @@ All media classification uses **two ML classifiers only**:
 
 | Classifier | What | Where |
 |---|---|---|
-| **Local SDXL** | `Xenova/ai-image-detector` via Transformers.js (ONNX/WASM) | Background service worker |
+| **Local SDXL** | `Organika/sdxl-detector` via Transformers.js (ONNX/WASM) | Background service worker |
 | **Remote ML** | Azure OpenAI APIM endpoint (`/openai`) | Background service worker (bypasses CORS) |
 
 **Everything else has been removed**: no URL-pattern heuristics, no EXIF metadata analysis, no C2PA, no nonescape-mini colour histograms, no text heuristics, no audio URL matching.
@@ -77,7 +77,7 @@ Audio detection is **not supported**. The detector always returns a neutral resu
 │  │  • Settings sync                   │    └──────────────────┘  │
 │  │  • SDXL_CLASSIFY handler           │                          │
 │  │    └─ createSdxlDetectorRunner()   │                          │
-│  │       Xenova/ai-image-detector       │                          │
+│  │       Organika/sdxl-detector       │                          │
 │  │       (Transformers.js + ONNX/WASM)│                          │
 │  │  • REMOTE_CLASSIFY handler         │                          │
 │  │    └─ fetch → Azure APIM endpoint  │                          │
@@ -156,4 +156,4 @@ The following classifiers were **removed** to simplify the codebase and eliminat
 - **Audio URL pattern matching** — unreliable based on domain name alone
 - **Temporal video analysis** — frame-diff variance, motion heuristics
 
-The only classifiers that remain are the **Xenova/ai-image-detector** (local ONNX model) and the **Azure OpenAI APIM remote endpoint** (optional escalation).
+The only classifiers that remain are the **Organika/sdxl-detector** (local ONNX model) and the **Azure OpenAI APIM remote endpoint** (optional escalation).

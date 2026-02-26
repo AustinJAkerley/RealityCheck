@@ -105,7 +105,7 @@ export interface ExtensionSettings {
    */
   remoteApiKey: string;
   /**
-   * HuggingFace API token for downloading gated models (e.g. Xenova/ai-image-detector).
+   * HuggingFace API token for downloading gated models (e.g. Organika/sdxl-detector).
    * Get a free token at https://huggingface.co/settings/tokens (read-only scope is sufficient).
    * Leave blank until the model is accessible without authentication.
    */

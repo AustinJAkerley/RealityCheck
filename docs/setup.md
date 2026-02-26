@@ -64,15 +64,15 @@ npm install
 
 ## 3a. Download the local AI model (one-time, ~90 MB)
 
-RealityCheck uses `Xenova/ai-image-detector` to classify images locally in your browser.  The model weights are **not** checked in to the repository — you must download them once before building.
+RealityCheck uses `Organika/sdxl-detector` to classify images locally in your browser.  The model weights are **not** checked in to the repository — you must download them once before building.
 
-### Step 1 — Accept the model terms
+### Step 1 — Accept the model terms (if required)
 
 1. Sign in at [huggingface.co](https://huggingface.co).
-2. Open [https://huggingface.co/Xenova/ai-image-detector](https://huggingface.co/Xenova/ai-image-detector).
-3. Click **"Agree and access repository"** to accept the model licence.
+2. Open [https://huggingface.co/Organika/sdxl-detector](https://huggingface.co/Organika/sdxl-detector).
+3. If prompted, click **"Agree and access repository"** to accept the model licence.
 
-### Step 2 — Create a HuggingFace read token
+### Step 2 — Create a HuggingFace read token (if model is gated)
 
 1. Go to [https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens).
 2. Click **New token** → choose scope **Read** → give it any name → **Generate token**.
@@ -99,21 +99,20 @@ node scripts/download-model.mjs
 
 You should see output like:
 ```
-Downloading Xenova/ai-image-detector model files…
+Downloading Organika/sdxl-detector model files…
 
-Found 8 files in Xenova/ai-image-detector
+Found N files in Organika/sdxl-detector
 
   ✓ config.json                                         0.0 MB
   ✓ preprocessor_config.json                            0.0 MB
-  ✓ onnx/model_quantized.onnx                          87.3 MB
   …
 
-✅  Model saved to extensions/model-cache/Xenova/ai-image-detector/
+✅  Model saved to extensions/model-cache/Organika/sdxl-detector/
 ```
 
 > **You only need to do this once.** The files are saved to `extensions/model-cache/` and are bundled into every extension build automatically. They are excluded from git (`.gitignore`).
 
-> **No token?** If you skip the model download, the extension still works — it will download the model (~90 MB) from HuggingFace automatically on first use. You will need to enter your HF token in the extension's **Advanced settings** popup for the runtime download to succeed.
+> **No token?** If you skip the model download, the extension still works — it will download the model from HuggingFace automatically on first use. You will need to enter your HF token in the extension's **Advanced settings** popup for the runtime download to succeed.
 
 ---
 

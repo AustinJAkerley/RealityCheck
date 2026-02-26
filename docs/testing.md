@@ -145,7 +145,7 @@ Tests:  150 passed, 150 total  (core)
 Tests:   37 passed,  37 total  (API)
 ```
 
-### Local AI model (Xenova/ai-image-detector) unit tests
+### Local AI model (Organika/sdxl-detector) unit tests
 
 The SDXL detector adapter ships with its own test file that runs entirely in Node.js — no model download or WASM required (uses an injectable mock classifier):
 
@@ -170,7 +170,7 @@ RC_LOCAL_MODEL_RGBA_JSON=/tmp/pixels.json npm test -w packages/core -- --testPat
 
 ### Watching the model download in the browser
 
-On first use, the extension downloads the Xenova/ai-image-detector weights (~90 MB) from HuggingFace Hub and caches them. To observe this:
+On first use, the extension downloads the Organika/sdxl-detector weights (~90 MB) from HuggingFace Hub and caches them. To observe this:
 
 1. Load the extension in Chrome and open DevTools → **Network** tab, filter by `huggingface.co`.
 2. Browse to a page with images — the download triggers on the first image processed.

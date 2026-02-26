@@ -1,12 +1,16 @@
 /**
- * Adapter for the Xenova/ai-image-detector model running locally via Transformers.js.
+ * Adapter for the Organika/sdxl-detector model running locally via Transformers.js.
  *
- * On first call the model weights (~90 MB) are downloaded from HuggingFace Hub
- * and cached by the browser. All subsequent inference runs fully offline in
- * WebAssembly via ONNX Runtime Web — no per-image API call is made.
+ * On first call the model weights are downloaded from HuggingFace Hub and cached
+ * by the browser. All subsequent inference runs fully offline in WebAssembly via
+ * ONNX Runtime Web — no per-image API call is made.
  *
- * Model: https://huggingface.co/Xenova/ai-image-detector
- * (ONNX export of a ViT-based AI image classifier, designed for Transformers.js)
+ * Model: https://huggingface.co/Organika/sdxl-detector
+ * (ViT-based AI image classifier trained on SDXL-generated vs real images)
+ *
+ * Pre-build download (recommended — avoids runtime auth):
+ *   node scripts/download-model.mjs   # downloads to extensions/model-cache/
+ *   .\scripts\build.ps1 chrome        # builds and bundles the model
  *
  * The model returns an array of classification labels, e.g.:
  *   [{ "label": "artificial", "score": 0.97 }, { "label": "real", "score": 0.03 }]
@@ -29,15 +33,13 @@ import type { MlModelRunner } from '../types.js';
 import { registerMlModel } from '../detectors/image-detector.js';
 
 export interface SdxlDetectorOptions {
-  /** HuggingFace model ID. Defaults to 'Xenova/ai-image-detector'. */
+  /** HuggingFace model ID. Defaults to 'Organika/sdxl-detector'. */
   modelId?: string;
   /**
    * HuggingFace API token used to download gated models.
-   * Xenova/ai-image-detector requires accepting model terms before download;
-   * anonymous requests return 401.  Supply a read-only token from
-   * https://huggingface.co/settings/tokens to unblock the download.
-   * The token is injected into fetch() at the service-worker level and is
-   * never sent outside of huggingface.co / hf.co domains.
+   * Supply a read-only token from https://huggingface.co/settings/tokens to
+   * unblock the download. The token is injected into fetch() at the service-worker
+   * level and is never sent outside of huggingface.co / hf.co domains.
    */
   hfToken?: string;
   /**
@@ -48,7 +50,7 @@ export interface SdxlDetectorOptions {
   classifier?: (image: unknown) => Promise<Array<{ label: string; score: number }>>;
 }
 
-export const SDXL_MODEL_ID = 'Xenova/ai-image-detector';
+export const SDXL_MODEL_ID = 'Organika/sdxl-detector';
 
 type ClassificationResult = Array<{ label: string; score: number }>;
 type Classifier = (image: unknown) => Promise<ClassificationResult>;
@@ -136,7 +138,7 @@ async function buildLocalClassifier(modelId: string, hfToken?: string): Promise<
         };
       } else if (hfToken) {
         // No local bundle — inject the HF token so the runtime download can succeed
-        // for gated models (e.g. Xenova/ai-image-detector which requires auth).
+        // for gated models (e.g. Organika/sdxl-detector which may require auth).
         const origFetch = globalThis.fetch.bind(globalThis);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (globalThis as any).fetch = (

@@ -2,7 +2,7 @@
 
 RealityCheck uses two classifiers:
 
-1. **Local SDXL** (`Xenova/ai-image-detector`) — always runs, no configuration needed.
+1. **Local SDXL** (`Organika/sdxl-detector`) — always runs, no configuration needed.
 2. **Remote ML** (Azure OpenAI APIM) — optional, opt-in via the popup settings.
 
 ---

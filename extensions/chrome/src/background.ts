@@ -70,7 +70,7 @@ chrome.runtime.onMessage.addListener(
     }
 
     if (message.type === 'SDXL_CLASSIFY') {
-      // Run the Xenova/ai-image-detector model in this ES module service worker.
+      // Run the Organika/sdxl-detector model in this ES module service worker.
       // Content scripts can't load WASM (import.meta.url fails in classic scripts).
       const { data, width, height } = message.payload as {
         data: Uint8ClampedArray;
