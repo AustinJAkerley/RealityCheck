@@ -308,54 +308,7 @@ Tests:  150 passed, 150 total
 
 ---
 
-## 9. Local AI model (Organika/sdxl-detector)
-
-RealityCheck uses [Organika/sdxl-detector](https://huggingface.co/Organika/sdxl-detector), a ViT-based binary classifier that runs **entirely on-device** via ONNX Runtime Web (WebAssembly). No per-image API call is made.
-
-### How it works
-
-- On first use, the model weights (~90 MB) are downloaded from HuggingFace Hub and cached by the browser's Cache API.
-- After the first download, all inference runs fully offline — no network required.
-- The local model is the first stage of the cascade: if the score is uncertain (0.25–0.75), the extension optionally escalates to remote classification.
-
-### Testing the local model manually
-
-The test suite includes a shell-mode helper for manual inspection. Set the `RC_LOCAL_MODEL_RGBA_JSON` environment variable to a JSON payload file:
-
-```json
-{
-  "data": [220, 120, 60, 255, 210, 110, 50, 255],
-  "width": 2,
-  "height": 1
-}
-```
-
-```bash
-RC_LOCAL_MODEL_RGBA_JSON=/tmp/pixels.json npm test -w packages/core -- --testPathPattern=local-model-shell
-```
-
-### Running the unit tests for the adapter
-
-```bash
-cd packages/core && npm test -- --testPathPattern=sdxl-detector-adapter
-```
-
-Expected output:
-```
-Tests:  8 passed, 8 total
-```
-
-The unit tests use an **injectable classifier** (no ONNX/WASM loaded) so they run instantly in Node.js without any model download.
-
-### Watching the model download in the browser
-
-1. Build and load the extension (see sections 4–5 above).
-2. Open Chrome DevTools → **Application** tab → **Cache Storage** → look for a `transformers-cache` entry after the first image is processed.
-3. Open the **Network** tab and filter by `huggingface.co` to watch the one-time model download.
-
----
-
-## 10. Available make/script targets
+## 9. Available make/script targets
 
 | `make` target | PowerShell (`build.ps1`) | CMD (`build.bat`) | What it does |
 |---|---|---|---|
