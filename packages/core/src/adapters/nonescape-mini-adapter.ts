@@ -45,6 +45,20 @@ export interface NonescapeModelFeatures {
    *   Expose Deepfakes and Face Manipulations" (WACV 2019).
    */
   laplacianSparsity: number;
+  /**
+   * Ratio of DCT high-frequency energy to total AC energy in sampled 8×8 blocks.
+   * Computed using a full 2-D 8×8 DCT (Loeffler et al. 1989 / AAN algorithm).
+   *
+   * Diffusion models apply iterative denoising which suppresses high-frequency
+   * content and noise residuals in flat regions.  Real photographs retain
+   * sensor read-noise whose energy is spread across all DCT frequencies.
+   * → AI images: lower dctHighFreqRatio.
+   * → Real photos: higher dctHighFreqRatio (noise floor across all ACs).
+   *
+   * Reference: Gragnaniello et al., "Are GAN Generated Images Easy to Detect?
+   *   A Critical Analysis of the State of the Art" (ICME 2021).
+   */
+  dctHighFreqRatio: number;
 }
 
 export interface NonescapeMiniAdapterOptions {
@@ -58,6 +72,22 @@ export interface NonescapeMiniAdapterOptions {
 }
 
 const DEFAULT_MODEL_NAME = 'nonescape-mini';
+
+// ── Precomputed 8-point DCT cosine table ──────────────────────────────────────
+// DCT8_COS[k][n] = cos(π·k·(2n+1)/16) for k,n ∈ {0..7}
+// Computed once at module load time to avoid Math.cos in hot loops.
+const DCT8_COS: readonly (readonly number[])[] = (() => {
+  const table: number[][] = [];
+  for (let k = 0; k < 8; k++) {
+    const row: number[] = [];
+    for (let n = 0; n < 8; n++) {
+      // k,n ∈ [0,7] — product k*(2n+1) ≤ 7*15 = 105, well within integer precision
+      row.push(Math.cos((Math.PI * k * (2 * n + 1)) / 16));
+    }
+    table.push(row);
+  }
+  return table;
+})();
 
 const builtInModels: Record<string, NonescapeModelApi> = {
   'nonescape-mini': {
@@ -89,14 +119,17 @@ const builtInModels: Record<string, NonescapeModelApi> = {
       // Score: 0 when sparsity ≤ 0.65, 1 when sparsity ≥ 0.90.
       const lapSparsityScore = Math.max(0, Math.min(1, (features.laplacianSparsity - 0.65) / 0.25));
 
+      // DCT high-frequency score (Gragnaniello 2021): diffusion denoising
+      // suppresses high-frequency energy.
+      // dctHighFreqRatio ≈ 0 → AI-like (smooth); ratio ≈ 0.20+ → real-photo-like.
+      // Score: 1 when ratio = 0, 0 when ratio ≥ 0.20.
+      const dctSmoothScore = Math.max(0, 1 - features.dctHighFreqRatio / 0.20);
+
       // ── Logistic regression ──────────────────────────────────────────────────
-      // Bias reduced from -1.80 to -2.80 to account for the three new positive
-      // feature contributions while maintaining the desired operating point:
-      //   typical AI portrait  → linear ≈ +3.2 → sigmoid ≈ 0.96 → score 0.95
-      //   uncertain real photo → linear ≈ +0.2 → sigmoid ≈ 0.55 (uncertain, escalate)
-      //   clear real photo     → linear ≈ -1.3 → sigmoid ≈ 0.21 → score 0.05
+      // Bias reduced from -2.80 to -3.60 to account for the new positive
+      // feature contribution.
       const linear =
-        -2.80 +
+        -3.60 +
         features.meanSat * 2.6 +
         (1 - features.satVar * 8) * 1.2 +
         (1 - Math.abs(features.meanLum - 0.5) * 2) * 0.9 +
@@ -105,7 +138,8 @@ const builtInModels: Record<string, NonescapeModelApi> = {
         lumVarScore * 0.4 +
         noiseFloorScore * 1.0 +
         textureUniformityScore * 0.6 +
-        lapSparsityScore * 0.7;
+        lapSparsityScore * 0.7 +
+        dctSmoothScore * 0.8;         // new: DCT high-freq energy (Gragnaniello 2021)
       const score = 1 / (1 + Math.exp(-linear));
       return Math.max(0, Math.min(1, score));
     },
@@ -125,12 +159,57 @@ function luma255(data: Uint8ClampedArray, i: number): number {
   return (data[i] * 299 + data[i + 1] * 587 + data[i + 2] * 114) / 1000;
 }
 
+/**
+ * Compute a 2-D 8×8 DCT on a flat 64-element luminance block (values 0–255)
+ * and return the ratio of high-frequency AC energy to total AC energy.
+ *
+ * @param block Exactly 64 luminance values in row-major order (index = row*8+col).
+ *
+ * Frequency zone classification (by diagonal index k+l):
+ *   low-freq  AC: k+l ∈ [1,  4] (coarse detail)
+ *   mid-freq  AC: k+l ∈ [5,  8] (medium detail)
+ *   high-freq AC: k+l ∈ [9, 14] (fine detail + noise)
+ *
+ * Returns high_AC / total_AC, or 0 if the block is constant.
+ */
+function blockDctHighFreqRatio(block: number[]): number {
+  // Row-wise 1-D DCT
+  const tmp: number[][] = [];
+  for (let r = 0; r < 8; r++) {
+    const row: number[] = [];
+    for (let k = 0; k < 8; k++) {
+      let s = 0;
+      const cos_k = DCT8_COS[k];
+      for (let n = 0; n < 8; n++) s += block[r * 8 + n] * cos_k[n];
+      row.push(s);
+    }
+    tmp.push(row);
+  }
+
+  // Column-wise 1-D DCT → final 2-D DCT coefficients
+  let totalAC = 0, highAC = 0;
+  for (let c = 0; c < 8; c++) {
+    for (let k = 0; k < 8; k++) {
+      let s = 0;
+      const cos_k = DCT8_COS[k];
+      for (let n = 0; n < 8; n++) s += tmp[n][c] * cos_k[n];
+      const diag = k + c;
+      if (diag === 0) continue; // skip DC
+      const e = s * s;
+      totalAC += e;
+      if (diag >= 9) highAC += e;
+    }
+  }
+  return totalAC > 0 ? highAC / totalAC : 0;
+}
+
 function extractFeatures(data: Uint8ClampedArray, width: number, height: number): NonescapeModelFeatures {
   const pixelCount = data.length / 4;
   if (pixelCount === 0) {
     return {
       meanSat: 0, satVar: 0, meanLum: 0, channelVarSimilarity: 0,
-      gradientMean: 0, lumVariance: 0, noiseFloor: 0, textureCoV: 0, laplacianSparsity: 0,
+      gradientMean: 0, lumVariance: 0, noiseFloor: 0, textureCoV: 0,
+      laplacianSparsity: 0, dctHighFreqRatio: 0,
     };
   }
 
@@ -279,9 +358,30 @@ function extractFeatures(data: Uint8ClampedArray, width: number, height: number)
   }
   const laplacianSparsity = lapCount > 0 ? lapSparse / lapCount : 0;
 
+  // DCT high-frequency energy ratio.
+  // Sample 8×8 blocks at ≈64×64 grid; compute blockDctHighFreqRatio() for each
+  // and average the results.  Blocks with zero AC energy are skipped (solid colour).
+  const DCT_BLK = 8;
+  const dctStep = Math.max(DCT_BLK, Math.ceil(Math.max(width, height) / 64) * DCT_BLK);
+  let dctRatioSum = 0, dctRatioCount = 0;
+  const dctBlock: number[] = new Array(64);
+  for (let by = 0; by + DCT_BLK <= height; by += dctStep) {
+    for (let bx = 0; bx + DCT_BLK <= width; bx += dctStep) {
+      for (let dy = 0; dy < DCT_BLK; dy++) {
+        for (let dx = 0; dx < DCT_BLK; dx++) {
+          dctBlock[dy * DCT_BLK + dx] = luma255(data, ((by + dy) * width + (bx + dx)) * 4);
+        }
+      }
+      dctRatioSum += blockDctHighFreqRatio(dctBlock);
+      dctRatioCount++;
+    }
+  }
+  const dctHighFreqRatio = dctRatioCount > 0 ? dctRatioSum / dctRatioCount : 0;
+
   return {
     meanSat, satVar, meanLum, channelVarSimilarity,
     gradientMean, lumVariance, noiseFloor, textureCoV, laplacianSparsity,
+    dctHighFreqRatio,
   };
 }
 
