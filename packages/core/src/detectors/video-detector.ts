@@ -24,7 +24,7 @@ import { DEFAULT_REMOTE_ENDPOINT } from '../types.js';
 import { DetectionCache } from '../utils/cache.js';
 import { RateLimiter } from '../utils/rate-limiter.js';
 import { hashUrl, hashDataUrl } from '../utils/hash.js';
-import { computeVisualAIScore } from './image-detector.js';
+import { computeVisualAIScore, getDownscaleMaxDim } from './image-detector.js';
 
 const AI_VIDEO_PATTERNS: RegExp[] = [
   /sora\.openai/i,
@@ -142,7 +142,8 @@ const FRAME_ANALYSIS_SIZE = 64;
  * - `visualScore`: average visual AI score across frames
  */
 async function analyzeVideoFrames(
-  video: HTMLVideoElement
+  video: HTMLVideoElement,
+  quality: DetectionQuality = 'medium'
 ): Promise<{ frames: string[]; temporalScore: number; visualScore: number }> {
   const duration = video.duration;
   if (!isFinite(duration) || duration <= 0 || video.videoWidth === 0) {
@@ -151,6 +152,7 @@ async function analyzeVideoFrames(
 
   const frameDataUrls: string[] = [];
   const framePixels: Uint8ClampedArray[] = [];
+  const frameMaxDim = getDownscaleMaxDim(quality);
 
   // Sample at evenly-spaced intervals, skipping the very start and end
   const step = duration / (MULTI_FRAME_COUNT + 1);
@@ -160,7 +162,7 @@ async function analyzeVideoFrames(
     await seekTo(video, step * i);
     const pixels = captureFramePixels(video, FRAME_ANALYSIS_SIZE, FRAME_ANALYSIS_SIZE);
     if (pixels) framePixels.push(pixels);
-    const dataUrl = captureVideoFrame(video);
+    const dataUrl = captureVideoFrame(video, frameMaxDim);
     if (dataUrl) frameDataUrls.push(dataUrl);
   }
 
@@ -226,6 +228,7 @@ export class VideoDetector implements Detector {
 
     // Step 1: URL heuristics
     const localScore = matchesAIVideoUrl(src) ? 0.7 : 0;
+    const quality = options.detectionQuality ?? 'medium';
 
     let finalScore = localScore;
     let source: DetectionResult['source'] = 'local';
@@ -237,7 +240,7 @@ export class VideoDetector implements Detector {
     let capturedFrames: string[] = [];
     if (video) {
       try {
-        const analysis = await analyzeVideoFrames(video);
+        const analysis = await analyzeVideoFrames(video, quality);
         temporalScore = analysis.temporalScore;
         videoVisualScore = analysis.visualScore;
         capturedFrames = analysis.frames;
@@ -255,14 +258,14 @@ export class VideoDetector implements Detector {
 
     // Step 3: Remote classification — send best available frame.
     if (options.remoteEnabled && video) {
-      const rl = this.rateLimiters[options.detectionQuality ?? 'medium'];
+      const rl = this.rateLimiters[quality];
       if (rl.consume()) {
         try {
           // Prefer frames from multi-frame analysis; fall back to a fresh single-frame
           // capture only when multi-frame analysis returned no frames (e.g. video not
           // yet loaded, zero dimensions). Both paths can return null on cross-origin.
           const frameDataUrl =
-            capturedFrames.length > 0 ? capturedFrames[0] : captureVideoFrame(video);
+            capturedFrames.length > 0 ? capturedFrames[0] : captureVideoFrame(video, getDownscaleMaxDim(quality));
           if (frameDataUrl) {
             const imageHash = hashDataUrl(frameDataUrl);
             const endpoint = options.remoteEndpoint || DEFAULT_REMOTE_ENDPOINT;
