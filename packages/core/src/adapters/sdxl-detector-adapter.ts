@@ -1,11 +1,12 @@
 /**
- * Adapter for the Organika/sdxl-detector model running locally via Transformers.js.
+ * Adapter for the Xenova/ai-image-detector model running locally via Transformers.js.
  *
  * On first call the model weights (~90 MB) are downloaded from HuggingFace Hub
  * and cached by the browser. All subsequent inference runs fully offline in
  * WebAssembly via ONNX Runtime Web — no per-image API call is made.
  *
- * Model: https://huggingface.co/Organika/sdxl-detector
+ * Model: https://huggingface.co/Xenova/ai-image-detector
+ * (ONNX export of a ViT-based AI image classifier, designed for Transformers.js)
  *
  * The model returns an array of classification labels, e.g.:
  *   [{ "label": "artificial", "score": 0.97 }, { "label": "real", "score": 0.03 }]
@@ -28,7 +29,7 @@ import type { MlModelRunner } from '../types.js';
 import { registerMlModel } from '../detectors/image-detector.js';
 
 export interface SdxlDetectorOptions {
-  /** HuggingFace model ID. Defaults to 'Organika/sdxl-detector'. */
+  /** HuggingFace model ID. Defaults to 'Xenova/ai-image-detector'. */
   modelId?: string;
   /**
    * Custom classifier function for testing or overriding the local pipeline.
@@ -38,7 +39,7 @@ export interface SdxlDetectorOptions {
   classifier?: (image: unknown) => Promise<Array<{ label: string; score: number }>>;
 }
 
-export const SDXL_MODEL_ID = 'Organika/sdxl-detector';
+export const SDXL_MODEL_ID = 'Xenova/ai-image-detector';
 
 type ClassificationResult = Array<{ label: string; score: number }>;
 type Classifier = (image: unknown) => Promise<ClassificationResult>;

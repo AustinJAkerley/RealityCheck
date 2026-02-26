@@ -81,8 +81,8 @@ describe('SDXL Detector adapter — local inference', () => {
     expect(arg.height).toBe(1);
   });
 
-  test('uses Organika/sdxl-detector as the default model ID', () => {
-    expect(SDXL_MODEL_ID).toBe('Organika/sdxl-detector');
+  test('uses Xenova/ai-image-detector as the default model ID', () => {
+    expect(SDXL_MODEL_ID).toBe('Xenova/ai-image-detector');
   });
 });
 
