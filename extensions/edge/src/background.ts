@@ -42,6 +42,8 @@ chrome.runtime.onMessage.addListener(
       storage
         .save(newSettings)
         .then(() => {
+          // Reset the SDXL runner so it picks up any new hfToken on the next call.
+          sdxlRunner = null;
           // Broadcast updated settings to all tabs
           chrome.tabs.query({}, (tabs) => {
             for (const tab of tabs) {
@@ -75,9 +77,15 @@ chrome.runtime.onMessage.addListener(
         width: number;
         height: number;
       };
-      sdxlRunner ??= createSdxlDetectorRunner();
-      sdxlRunner
-        .run(data, width, height)
+      // Load settings on first use so the hfToken is available for the model download.
+      (sdxlRunner
+        ? Promise.resolve(sdxlRunner)
+        : storage.load().then((s) => {
+            sdxlRunner = createSdxlDetectorRunner({ hfToken: s.hfToken || undefined });
+            return sdxlRunner;
+          })
+      )
+        .then((runner) => runner.run(data, width, height))
         .then((score) => {
           console.log('[RealityCheck] SDXL_CLASSIFY score:', score);
           sendResponse({ ok: true, score });

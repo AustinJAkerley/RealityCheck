@@ -105,6 +105,12 @@ export interface ExtensionSettings {
    */
   remoteApiKey: string;
   /**
+   * HuggingFace API token for downloading gated models (e.g. Xenova/ai-image-detector).
+   * Get a free token at https://huggingface.co/settings/tokens (read-only scope is sufficient).
+   * Leave blank until the model is accessible without authentication.
+   */
+  hfToken: string;
+  /**
    * Dev mode: when true, every image and video is immediately watermarked with a green
    * "DEV: Watermarking Active" overlay, bypassing detection entirely.
    * Default: false. Keep this OFF in production.
@@ -129,6 +135,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   detectionQuality: 'high',
   remoteEndpoint: '',
   remoteApiKey: '',
+  hfToken: '',
   devMode: true,
   watermark: DEFAULT_WATERMARK_CONFIG,
   siteSettings: {},

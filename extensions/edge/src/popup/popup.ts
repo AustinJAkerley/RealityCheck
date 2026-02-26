@@ -28,6 +28,7 @@ const reportStatusEl = $<HTMLElement>('reportStatus');
 // Advanced fields
 const remoteEndpointEl = $<HTMLInputElement>('remoteEndpoint');
 const remoteApiKeyEl = $<HTMLInputElement>('remoteApiKey');
+const hfTokenEl = $<HTMLInputElement>('hfToken');
 const devModeEl = $<HTMLInputElement>('devMode');
 const devModeNoteEl = $<HTMLElement>('devModeNote');
 
@@ -71,6 +72,7 @@ function reflectSettings(): void {
   // Advanced fields
   remoteEndpointEl.value = settings.remoteEndpoint ?? '';
   remoteApiKeyEl.value = settings.remoteApiKey ?? '';
+  hfTokenEl.value = settings.hfToken ?? '';
   devModeEl.checked = settings.devMode ?? false;
   devModeNoteEl.classList.toggle('hidden', !settings.devMode);
 }
@@ -180,6 +182,10 @@ remoteEndpointEl.addEventListener('input', () => {
 });
 remoteApiKeyEl.addEventListener('input', () => {
   settings = { ...settings, remoteApiKey: remoteApiKeyEl.value.trim() };
+  debouncedSave();
+});
+hfTokenEl.addEventListener('input', () => {
+  settings = { ...settings, hfToken: hfTokenEl.value.trim() };
   debouncedSave();
 });
 devModeEl.addEventListener('change', async () => {

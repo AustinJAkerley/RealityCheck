@@ -27,11 +27,19 @@
  */
 import type { MlModelRunner } from '../types.js';
 import { registerMlModel } from '../detectors/image-detector.js';
-import { createNonescapeMiniRunner } from './nonescape-mini-adapter.js';
 
 export interface SdxlDetectorOptions {
   /** HuggingFace model ID. Defaults to 'Xenova/ai-image-detector'. */
   modelId?: string;
+  /**
+   * HuggingFace API token used to download gated models.
+   * Xenova/ai-image-detector requires accepting model terms before download;
+   * anonymous requests return 401.  Supply a read-only token from
+   * https://huggingface.co/settings/tokens to unblock the download.
+   * The token is injected into fetch() at the service-worker level and is
+   * never sent outside of huggingface.co / hf.co domains.
+   */
+  hfToken?: string;
   /**
    * Custom classifier function for testing or overriding the local pipeline.
    * When provided, the Transformers.js pipeline is not loaded.
@@ -59,7 +67,7 @@ let cachedClassifierPromise: Promise<Classifier> | null = null;
  * On failure the promise is cleared so the next call retries rather than
  * immediately re-throwing the same cached rejection.
  */
-async function buildLocalClassifier(modelId: string): Promise<Classifier> {
+async function buildLocalClassifier(modelId: string, hfToken?: string): Promise<Classifier> {
   if (!cachedClassifierPromise) {
     cachedClassifierPromise = (async () => {
       const { pipeline, env } = await import('@huggingface/transformers');
@@ -72,6 +80,45 @@ async function buildLocalClassifier(modelId: string): Promise<Classifier> {
       if (onnxEnv) {
         onnxEnv.wasm ??= {};
         onnxEnv.wasm.numThreads = 1;
+      }
+
+      // Transformers.js browser mode intentionally omits Authorization headers
+      // (see getFile() in @huggingface/transformers/src/utils/hub.js).  When
+      // the model is gated on HuggingFace the anonymous fetch returns 401.
+      // Monkey-patch globalThis.fetch to inject the user's HF token for
+      // huggingface.co / hf.co hostnames only; all other fetches are unaffected.
+      if (hfToken) {
+        const origFetch = globalThis.fetch.bind(globalThis);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (globalThis as any).fetch = (
+          input: RequestInfo | URL,
+          init?: RequestInit,
+        ): Promise<Response> => {
+          const urlStr = input instanceof Request ? input.url : String(input);
+          let isHfUrl = false;
+          try {
+            const { hostname } = new URL(urlStr);
+            isHfUrl =
+              hostname === 'huggingface.co' ||
+              hostname.endsWith('.huggingface.co') ||
+              hostname === 'hf.co' ||
+              hostname.endsWith('.hf.co');
+          } catch {
+            // malformed URL — skip injection
+          }
+          if (isHfUrl) {
+            // Merge headers from both the Request object (if any) and init,
+            // then add the Authorization header.
+            const base = input instanceof Request ? input.headers : undefined;
+            const headers = new Headers(base);
+            if (init?.headers) {
+              new Headers(init.headers).forEach((v, k) => headers.set(k, v));
+            }
+            headers.set('Authorization', `Bearer ${hfToken}`);
+            return origFetch(urlStr, { ...init, headers });
+          }
+          return origFetch(input, init);
+        };
       }
 
       console.log('[RealityCheck] Loading SDXL model:', modelId);
@@ -100,9 +147,7 @@ function classifyFromScore(score: number): number {
 
 export function createSdxlDetectorRunner(options: SdxlDetectorOptions = {}): MlModelRunner {
   const modelId = options.modelId ?? SDXL_MODEL_ID;
-  // Lazily instantiated nonescape-mini fallback — only created if the
-  // Transformers.js model download fails with an auth error (401/403).
-  let fallback: MlModelRunner | null = null;
+  const hfToken = options.hfToken;
 
   return {
     async run(data: Uint8ClampedArray, width: number, height: number): Promise<number> {
@@ -117,7 +162,7 @@ export function createSdxlDetectorRunner(options: SdxlDetectorOptions = {}): MlM
         } else {
           // Production path: lazy-load Transformers.js and build a RawImage for the model.
           const { RawImage } = await import('@huggingface/transformers');
-          classify = await buildLocalClassifier(modelId);
+          classify = await buildLocalClassifier(modelId, hfToken);
           image = new RawImage(data, width, height, 4);
         }
 
@@ -128,26 +173,7 @@ export function createSdxlDetectorRunner(options: SdxlDetectorOptions = {}): MlM
         const score = artificial ? Math.max(0, Math.min(1, artificial.score)) : 0.5;
         return classifyFromScore(score);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error('[RealityCheck] SDXL inference error:', msg);
-        // Transformers.js hub.js throws these exact messages for HTTP 401 and 403
-        // responses (see ERROR_MAPPING in @huggingface/transformers/src/utils/hub.js).
-        // When the model is gated (requires HuggingFace authentication), degrade
-        // gracefully to the nonescape-mini local scorer rather than returning an
-        // uninformative 0.5.  To restore full ViT accuracy the user must accept
-        // the model terms at https://huggingface.co/Xenova/ai-image-detector.
-        if (
-          msg.includes('Unauthorized access to file') ||
-          msg.includes('Forbidden access to file')
-        ) {
-          console.warn(
-            '[RealityCheck] AI model download blocked (gated model — requires HuggingFace ' +
-              'authentication). Using nonescape-mini fallback. Accept model terms at ' +
-              'https://huggingface.co/Xenova/ai-image-detector to restore full accuracy.',
-          );
-          fallback ??= createNonescapeMiniRunner();
-          return fallback.run(data, width, height);
-        }
+        console.error('[RealityCheck] SDXL inference error:', err instanceof Error ? err.message : err);
         return 0.5;
       }
     },
