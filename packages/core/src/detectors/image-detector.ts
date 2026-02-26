@@ -40,7 +40,7 @@ const PREFILTER_SIZE = 64;
  */
 const PHOTOREALISM_SKIP_THRESHOLD = 0.20;
 const OBVIOUS_METADATA_AI_THRESHOLD = 0.7;
-const LOCAL_UNCERTAIN_MIN = 0.25;
+const LOCAL_UNCERTAIN_MIN = 0.15;
 const LOCAL_UNCERTAIN_MAX = 0.75;
 
 // ── ML model registry ────────────────────────────────────────────────────────
@@ -948,11 +948,12 @@ export class ImageDetector implements Detector {
       }
     }
 
-    // Use a lower threshold for local-only results: heuristics alone are weaker
-    // than the remote classifier, so a lower bar catches more AI images while
-    // accepting some false positives. The remote classifier (when enabled) uses
-    // a calibrated 0.35 threshold against the blended remote+local score.
-    const aiThreshold = source === 'local' ? 0.25 : 0.35;
+    // Use a higher threshold for local-only results so that the uncertain
+    // middle-ground scores (0.25–0.40) from the nonescape-mini statistical
+    // model do not generate false positives when remote ML is unavailable.
+    // The remote classifier (when enabled) uses a calibrated 0.35 threshold
+    // against the blended remote+local score.
+    const aiThreshold = source === 'local' ? 0.40 : 0.35;
     const result: DetectionResult = {
       contentType: 'image',
       isAIGenerated: finalScore >= aiThreshold,
